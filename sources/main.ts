@@ -7,6 +7,7 @@ import { factsCommand } from "@/commands/facts";
 import { pingCommand } from "@/commands/ping";
 import { searchCommand } from "@/commands/search";
 import { todosCommand } from "@/commands/todos";
+import { todayBriefCommand } from "@/commands/todayBrief";
 import { versionCommand } from "@/commands/version";
 import type { Environment } from "@/environment";
 
@@ -20,6 +21,7 @@ const commands = [
   pingCommand,
   searchCommand,
   todosCommand,
+  todayBriefCommand,
   versionCommand,
 ] satisfies readonly Command[];
 
