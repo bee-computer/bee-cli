@@ -5,6 +5,7 @@ import { conversationsCommand } from "@/commands/conversations";
 import { dailyCommand } from "@/commands/daily";
 import { factsCommand } from "@/commands/facts";
 import { pingCommand } from "@/commands/ping";
+import { searchCommand } from "@/commands/search";
 import { todosCommand } from "@/commands/todos";
 import { versionCommand } from "@/commands/version";
 import type { Environment } from "@/environment";
@@ -17,6 +18,7 @@ const commands = [
   dailyCommand,
   factsCommand,
   pingCommand,
+  searchCommand,
   todosCommand,
   versionCommand,
 ] satisfies readonly Command[];
