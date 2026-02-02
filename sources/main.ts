@@ -4,6 +4,7 @@ import { authCommand } from "@/commands/auth";
 import { conversationsCommand } from "@/commands/conversations";
 import { dailyCommand } from "@/commands/daily";
 import { factsCommand } from "@/commands/facts";
+import { meCommand } from "@/commands/me";
 import { pingCommand } from "@/commands/ping";
 import { searchCommand } from "@/commands/search";
 import { todosCommand } from "@/commands/todos";
@@ -18,6 +19,7 @@ const commands = [
   conversationsCommand,
   dailyCommand,
   factsCommand,
+  meCommand,
   pingCommand,
   searchCommand,
   todosCommand,
