@@ -5,6 +5,7 @@ const USAGE = [
   "bee [--staging] facts list [--limit N] [--cursor <cursor>] [--confirmed <true|false>]",
   "bee [--staging] facts get <id>",
   "bee [--staging] facts create --text <text>",
+  "bee [--staging] facts update <id> --text <text> [--confirmed <true|false>]",
 ].join("\n");
 
 export const factsCommand: Command = {
@@ -26,6 +27,9 @@ export const factsCommand: Command = {
         return;
       case "create":
         await handleCreate(rest, context);
+        return;
+      case "update":
+        await handleUpdate(rest, context);
         return;
       default:
         throw new Error(`Unknown facts subcommand: ${subcommand}`);
@@ -202,4 +206,98 @@ function parseCreateArgs(args: readonly string[]): CreateOptions {
   }
 
   return { text };
+}
+
+type UpdateOptions = {
+  id: number;
+  text: string;
+  confirmed?: boolean;
+};
+
+async function handleUpdate(
+  args: readonly string[],
+  context: CommandContext
+): Promise<void> {
+  const options = parseUpdateArgs(args);
+  const body: { text: string; confirmed?: boolean } = { text: options.text };
+  if (options.confirmed !== undefined) {
+    body.confirmed = options.confirmed;
+  }
+
+  const data = await requestDeveloperJson(context, `/v1/facts/${options.id}`, {
+    method: "PUT",
+    json: body,
+  });
+  printJson(data);
+}
+
+function parseUpdateArgs(args: readonly string[]): UpdateOptions {
+  let text: string | undefined;
+  let confirmed: boolean | undefined;
+  const positionals: string[] = [];
+
+  for (let i = 0; i < args.length; i += 1) {
+    const arg = args[i];
+    if (arg === undefined) {
+      continue;
+    }
+
+    if (arg === "--text") {
+      const value = args[i + 1];
+      if (value === undefined) {
+        throw new Error("--text requires a value");
+      }
+      text = value;
+      i += 1;
+      continue;
+    }
+
+    if (arg === "--confirmed") {
+      const value = args[i + 1];
+      if (value === undefined) {
+        throw new Error("--confirmed requires a value");
+      }
+      confirmed = parseBoolean(value, "--confirmed");
+      i += 1;
+      continue;
+    }
+
+    if (arg.startsWith("-")) {
+      throw new Error(`Unknown option: ${arg}`);
+    }
+
+    positionals.push(arg);
+  }
+
+  if (positionals.length === 0) {
+    throw new Error("Missing fact id.");
+  }
+  if (positionals.length > 1) {
+    throw new Error(`Unexpected arguments: ${positionals.join(" ")}`);
+  }
+
+  if (!text) {
+    throw new Error("Missing fact text. Provide --text.");
+  }
+
+  const options: UpdateOptions = {
+    id: parseId([positionals[0] ?? ""]),
+    text,
+  };
+  if (confirmed !== undefined) {
+    options.confirmed = confirmed;
+  }
+
+  return options;
+}
+
+function parseBoolean(value: string, flagName: string): boolean {
+  const normalized = value.toLowerCase();
+  if (normalized === "true") {
+    return true;
+  }
+  if (normalized === "false") {
+    return false;
+  }
+  throw new Error(`${flagName} must be true or false`);
 }
