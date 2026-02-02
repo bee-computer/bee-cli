@@ -1,6 +1,8 @@
-import type { Command } from "@/commands/types";
+import type { Command, CommandContext } from "@/commands/types";
 
 const USAGE = "bee ping [--count N]";
+const PING_PATH = "/v1/me";
+const TIMEOUT_MS = 5000;
 
 function parseCount(args: readonly string[]): number {
   let count = 1;
@@ -40,15 +42,26 @@ function parseCount(args: readonly string[]): number {
   return count;
 }
 
+async function pingServer(context: CommandContext): Promise<void> {
+  const response = await context.client.fetch(PING_PATH, {
+    method: "GET",
+    signal: AbortSignal.timeout(TIMEOUT_MS),
+  });
+
+  if (response.status < 200 || response.status >= 600) {
+    throw new Error(`Unexpected response status: ${response.status}`);
+  }
+}
+
 export const pingCommand: Command = {
   name: "ping",
   description: "Run a quick connectivity check.",
   usage: USAGE,
   run: async (args, context) => {
-    void context;
     const count = parseCount(args);
 
     for (let i = 0; i < count; i += 1) {
+      await pingServer(context);
       console.log("pong");
     }
   },

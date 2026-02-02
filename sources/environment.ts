@@ -1,4 +1,4 @@
-import { PROD_INTERMEDIATE_CA, PROD_ROOT_CA, STAGING_CA_CERT } from "@/certs";
+import { PROD_ROOT_CA, STAGING_CA_CERT } from "@/certs";
 
 export type Environment = "prod" | "staging";
 
@@ -12,7 +12,7 @@ const ENVIRONMENTS: Record<Environment, EnvironmentConfig> = {
   prod: {
     label: "production",
     apiUrl: "https://app-api-developer.ce.bee.amazon.dev/",
-    caCerts: [PROD_INTERMEDIATE_CA, PROD_ROOT_CA],
+    caCerts: [PROD_ROOT_CA],
   },
   staging: {
     label: "staging",
