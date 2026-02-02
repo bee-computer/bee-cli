@@ -1,8 +1,8 @@
-import type { Command } from "@/commands/types";
-import { clearConfig, loadConfig, saveConfig } from "@/config";
+import type { Command, CommandContext } from "@/commands/types";
+import { getEnvironmentConfig } from "@/environment";
+import { clearToken, loadToken, saveToken } from "@/secureStore";
 
 type LoginOptions = {
-  apiUrl?: string;
   token?: string;
   tokenStdin: boolean;
   skipVerify: boolean;
@@ -19,10 +19,10 @@ type DevUser = {
 };
 
 const USAGE = [
-  "bee auth login --token <token> [--api-url <url>] [--skip-verify]",
-  "bee auth login --token-stdin [--api-url <url>] [--skip-verify]",
-  "bee auth status [--no-verify]",
-  "bee auth logout",
+  "bee [--staging] auth login --token <token> [--skip-verify]",
+  "bee [--staging] auth login --token-stdin [--skip-verify]",
+  "bee [--staging] auth status [--no-verify]",
+  "bee [--staging] auth logout",
 ].join("\n");
 
 const DESCRIPTION =
@@ -32,7 +32,7 @@ export const authCommand: Command = {
   name: "auth",
   description: DESCRIPTION,
   usage: USAGE,
-  run: async (args) => {
+  run: async (args, context) => {
     if (args.length === 0) {
       throw new Error("Missing subcommand. Use login, status, or logout.");
     }
@@ -40,13 +40,13 @@ export const authCommand: Command = {
     const [subcommand, ...rest] = args;
     switch (subcommand) {
       case "login":
-        await handleLogin(rest);
+        await handleLogin(rest, context);
         return;
       case "status":
-        await handleStatus(rest);
+        await handleStatus(rest, context);
         return;
       case "logout":
-        await handleLogout(rest);
+        await handleLogout(rest, context);
         return;
       default:
         throw new Error(`Unknown auth subcommand: ${subcommand}`);
@@ -54,7 +54,10 @@ export const authCommand: Command = {
   },
 };
 
-async function handleLogin(args: readonly string[]): Promise<void> {
+async function handleLogin(
+  args: readonly string[],
+  context: CommandContext
+): Promise<void> {
   const options = parseLoginArgs(args);
 
   if (options.tokenStdin && options.token) {
@@ -74,24 +77,12 @@ async function handleLogin(args: readonly string[]): Promise<void> {
     throw new Error("Missing token. Provide --token or --token-stdin.");
   }
 
-  const current = await loadConfig();
-  const apiUrl =
-    options.apiUrl ??
-    current.apiUrl ??
-    process.env["BEE_API_URL"]?.trim() ??
-    undefined;
-
   let user: DevUser | null = null;
-  if (!options.skipVerify && apiUrl) {
-    user = await fetchDeveloperMe(apiUrl, token);
+  if (!options.skipVerify) {
+    user = await fetchDeveloperMe(context, token);
   }
 
-  const nextConfig = { ...current };
-  if (apiUrl) {
-    nextConfig.apiUrl = apiUrl;
-  }
-  nextConfig.token = token;
-  await saveConfig(nextConfig);
+  await saveToken(context.env, token);
 
   if (user) {
     const name = [user.first_name, user.last_name].filter(Boolean).join(" ");
@@ -99,51 +90,47 @@ async function handleLogin(args: readonly string[]): Promise<void> {
     return;
   }
 
-  if (!apiUrl) {
-    console.log("Token stored. Set an API URL to verify it later.");
-    return;
-  }
-
   console.log("Token stored.");
 }
 
-async function handleStatus(args: readonly string[]): Promise<void> {
+async function handleStatus(
+  args: readonly string[],
+  context: CommandContext
+): Promise<void> {
   const options = parseStatusArgs(args);
-  const config = await loadConfig();
-  const apiUrl = config.apiUrl ?? process.env["BEE_API_URL"]?.trim();
+  const token = await loadToken(context.env);
+  const config = getEnvironmentConfig(context.env);
 
-  if (!config.token) {
+  if (!token) {
     console.log("Not logged in.");
-    if (apiUrl) {
-      console.log(`API URL: ${apiUrl}`);
-    } else {
-      console.log("API URL: not set");
-    }
+    console.log(`API: ${config.label} (${config.apiUrl})`);
     return;
   }
 
-  console.log(`API URL: ${apiUrl ?? "not set"}`);
-  console.log(`Token: ${maskToken(config.token)}`);
+  console.log(`API: ${config.label} (${config.apiUrl})`);
+  console.log(`Token: ${maskToken(token)}`);
 
-  if (options.noVerify || !apiUrl) {
+  if (options.noVerify) {
     return;
   }
 
-  const user = await fetchDeveloperMe(apiUrl, config.token);
+  const user = await fetchDeveloperMe(context, token);
   const name = [user.first_name, user.last_name].filter(Boolean).join(" ");
   console.log(`Verified as ${name} (id ${user.id}).`);
 }
 
-async function handleLogout(args: readonly string[]): Promise<void> {
+async function handleLogout(
+  args: readonly string[],
+  context: CommandContext
+): Promise<void> {
   if (args.length > 0) {
     throw new Error("logout does not accept arguments.");
   }
-  await clearConfig();
+  await clearToken(context.env);
   console.log("Logged out.");
 }
 
 function parseLoginArgs(args: readonly string[]): LoginOptions {
-  let apiUrl: string | undefined;
   let token: string | undefined;
   let tokenStdin = false;
   let skipVerify = false;
@@ -152,19 +139,6 @@ function parseLoginArgs(args: readonly string[]): LoginOptions {
   for (let i = 0; i < args.length; i += 1) {
     const arg = args[i];
     if (arg === undefined) {
-      continue;
-    }
-
-    if (arg === "--api-url") {
-      const value = args[i + 1];
-      if (value === undefined) {
-        throw new Error("--api-url requires a value");
-      }
-      apiUrl = value.trim();
-      if (apiUrl.length === 0) {
-        throw new Error("--api-url must not be empty");
-      }
-      i += 1;
       continue;
     }
 
@@ -200,9 +174,6 @@ function parseLoginArgs(args: readonly string[]): LoginOptions {
   }
 
   const options: LoginOptions = { tokenStdin, skipVerify };
-  if (apiUrl !== undefined) {
-    options.apiUrl = apiUrl;
-  }
   if (token !== undefined) {
     options.token = token;
   }
@@ -266,9 +237,11 @@ function maskToken(token: string): string {
   return `${trimmed.slice(0, 4)}...${trimmed.slice(-4)}`;
 }
 
-async function fetchDeveloperMe(apiUrl: string, token: string): Promise<DevUser> {
-  const url = new URL("/v1/me", apiUrl);
-  const response = await fetch(url, {
+async function fetchDeveloperMe(
+  context: CommandContext,
+  token: string
+): Promise<DevUser> {
+  const response = await context.client.fetch("/v1/me", {
     method: "GET",
     headers: {
       Authorization: `Bearer ${token}`,
@@ -287,10 +260,7 @@ async function fetchDeveloperMe(apiUrl: string, token: string): Promise<DevUser>
   const data = await safeJson(response);
   const id = data?.["id"];
   const firstName = data?.["first_name"];
-  if (
-    typeof id !== "number" ||
-    typeof firstName !== "string"
-  ) {
+  if (typeof id !== "number" || typeof firstName !== "string") {
     throw new Error("Invalid response from developer API.");
   }
 

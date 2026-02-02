@@ -31,7 +31,8 @@ export const versionCommand: Command = {
   name: "version",
   description: "Print the CLI version.",
   usage: USAGE,
-  run: async (args) => {
+  run: async (args, context) => {
+    void context;
     const json = parseJsonFlag(args);
 
     if (json) {

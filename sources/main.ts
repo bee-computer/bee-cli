@@ -1,7 +1,9 @@
-import type { Command } from "@/commands/types";
+import type { Command, CommandContext } from "@/commands/types";
+import { createDeveloperClient } from "@/client";
 import { authCommand } from "@/commands/auth";
 import { pingCommand } from "@/commands/ping";
 import { versionCommand } from "@/commands/version";
+import type { Environment } from "@/environment";
 
 const BIN = "bee";
 
@@ -22,7 +24,10 @@ function isHelpFlag(value: string): boolean {
 }
 
 function printHelp(): void {
-  console.log(`${BIN} <command> [options]`);
+  console.log(`${BIN} [--staging] <command> [options]`);
+  console.log("");
+  console.log("Global options:");
+  console.log("  --staging  Use the staging developer API.");
   console.log("");
   console.log("Commands:");
 
@@ -44,8 +49,10 @@ function printCommandHelp(command: Command): void {
 }
 
 async function runCli(): Promise<void> {
-  const args = process.argv.slice(2);
+  const parsed = parseGlobalArgs(process.argv.slice(2));
+  const args = parsed.args;
   const firstArg = args[0];
+  const context = createContext(parsed.env);
 
   if (!firstArg || isHelpFlag(firstArg)) {
     printHelp();
@@ -53,7 +60,7 @@ async function runCli(): Promise<void> {
   }
 
   if (firstArg === "--version" || firstArg === "-v") {
-    await versionCommand.run([]);
+    await versionCommand.run([], context);
     return;
   }
 
@@ -74,7 +81,7 @@ async function runCli(): Promise<void> {
   }
 
   try {
-    await command.run(commandArgs);
+    await command.run(commandArgs, context);
   } catch (error) {
     if (error instanceof Error) {
       console.error(error.message);
@@ -87,3 +94,25 @@ async function runCli(): Promise<void> {
 }
 
 void runCli();
+
+function parseGlobalArgs(args: readonly string[]): { env: Environment; args: string[] } {
+  let env: Environment = "prod";
+  const remaining: string[] = [];
+
+  for (const arg of args) {
+    if (arg === "--staging") {
+      env = "staging";
+      continue;
+    }
+    remaining.push(arg);
+  }
+
+  return { env, args: remaining };
+}
+
+function createContext(env: Environment): CommandContext {
+  return {
+    env,
+    client: createDeveloperClient(env),
+  };
+}

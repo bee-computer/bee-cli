@@ -44,11 +44,12 @@ export const pingCommand: Command = {
   name: "ping",
   description: "Run a quick connectivity check.",
   usage: USAGE,
-  run: async (args) => {
+  run: async (args, context) => {
+    void context;
     const count = parseCount(args);
 
     for (let i = 0; i < count; i += 1) {
       console.log("pong");
     }
-  }
+  },
 };

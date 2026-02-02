@@ -24,8 +24,8 @@
     "paths": {
       "@/*": ["sources/*"]
     },
-    "types": ["node"],
-    "skipLibCheck": false
+    "types": ["bun-types"],
+    "skipLibCheck": true
   },
   "include": ["sources/**/*.ts"]
 }
