@@ -6,6 +6,7 @@ const USAGE = [
   "bee [--staging] facts get <id>",
   "bee [--staging] facts create --text <text>",
   "bee [--staging] facts update <id> --text <text> [--confirmed <true|false>]",
+  "bee [--staging] facts delete <id>",
 ].join("\n");
 
 export const factsCommand: Command = {
@@ -30,6 +31,9 @@ export const factsCommand: Command = {
         return;
       case "update":
         await handleUpdate(rest, context);
+        return;
+      case "delete":
+        await handleDelete(rest, context);
         return;
       default:
         throw new Error(`Unknown facts subcommand: ${subcommand}`);
@@ -300,4 +304,15 @@ function parseBoolean(value: string, flagName: string): boolean {
     return false;
   }
   throw new Error(`${flagName} must be true or false`);
+}
+
+async function handleDelete(
+  args: readonly string[],
+  context: CommandContext
+): Promise<void> {
+  const id = parseId(args);
+  const data = await requestDeveloperJson(context, `/v1/facts/${id}`, {
+    method: "DELETE",
+  });
+  printJson(data);
 }
