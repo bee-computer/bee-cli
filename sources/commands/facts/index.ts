@@ -1,7 +1,10 @@
 import type { Command, CommandContext } from "@/commands/types";
 import { printJson, requestDeveloperJson } from "@/commands/developerApi";
 
-const USAGE = "bee [--staging] facts list [--limit N] [--cursor <cursor>] [--confirmed <true|false>]";
+const USAGE = [
+  "bee [--staging] facts list [--limit N] [--cursor <cursor>] [--confirmed <true|false>]",
+  "bee [--staging] facts get <id>",
+].join("\n");
 
 export const factsCommand: Command = {
   name: "facts",
@@ -16,6 +19,9 @@ export const factsCommand: Command = {
     switch (subcommand) {
       case "list":
         await handleList(rest, context);
+        return;
+      case "get":
+        await handleGet(rest, context);
         return;
       default:
         throw new Error(`Unknown facts subcommand: ${subcommand}`);
@@ -112,4 +118,30 @@ function parseListArgs(args: readonly string[]): ListOptions {
   }
 
   return options;
+}
+
+async function handleGet(
+  args: readonly string[],
+  context: CommandContext
+): Promise<void> {
+  const id = parseId(args);
+  const data = await requestDeveloperJson(context, `/v1/facts/${id}`, {
+    method: "GET",
+  });
+  printJson(data);
+}
+
+function parseId(args: readonly string[]): number {
+  if (args.length === 0) {
+    throw new Error("Missing fact id.");
+  }
+  if (args.length > 1) {
+    throw new Error(`Unexpected arguments: ${args.join(" ")}`);
+  }
+
+  const parsed = Number.parseInt(args[0] ?? "", 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    throw new Error("Fact id must be a positive integer.");
+  }
+  return parsed;
 }
