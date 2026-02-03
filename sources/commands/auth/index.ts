@@ -110,6 +110,9 @@ async function handleStatus(
   _args: readonly string[],
   context: CommandContext
 ): Promise<void> {
+  if (_args.length > 0) {
+    throw new Error("status does not accept arguments.");
+  }
   const token = await loadToken(context.env);
   const config = getEnvironmentConfig(context.env);
 
@@ -227,7 +230,11 @@ async function loginWithAppPairing(context: CommandContext): Promise<string> {
   const publicKey = keyPair.publicKeyBase64;
   const secretKey = keyPair.secretKey;
 
-  const initial = await requestAppPairing(context, appId, publicKey);
+  const { result: initial, baseUrl } = await requestAppPairing(
+    context,
+    appId,
+    publicKey
+  );
 
   if (initial.status === "completed") {
     return decryptAppPairingToken(initial.encryptedToken, secretKey);
@@ -248,6 +255,7 @@ async function loginWithAppPairing(context: CommandContext): Promise<string> {
     publicKey,
     secretKey,
     expiresAt: initial.expiresAt,
+    baseUrl,
   });
 }
 
@@ -285,8 +293,41 @@ async function requestAppPairing(
   context: CommandContext,
   appId: string,
   publicKey: string
+): Promise<{ result: AppPairingRequest; baseUrl: string }> {
+  const candidates = getPairingApiCandidates(context.env);
+  let lastError: Error | null = null;
+
+  for (const baseUrl of candidates) {
+    try {
+      const result = await requestAppPairingWithBase(
+        context,
+        appId,
+        publicKey,
+        baseUrl
+      );
+      return { result, baseUrl };
+    } catch (error) {
+      if (error instanceof PairingEndpointNotFoundError) {
+        lastError = error;
+        continue;
+      }
+      throw error;
+    }
+  }
+
+  if (lastError) {
+    throw lastError;
+  }
+  throw new Error("Pairing endpoint not found.");
+}
+
+async function requestAppPairingWithBase(
+  context: CommandContext,
+  appId: string,
+  publicKey: string,
+  baseUrl: string
 ): Promise<AppPairingRequest> {
-  const response = await context.client.fetch("/apps/pairing/request", {
+  const response = await fetchPairing(context.env, baseUrl, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -296,10 +337,16 @@ async function requestAppPairing(
 
   if (!response.ok) {
     const errorPayload = await safeJson(response);
-    const message =
-      typeof errorPayload?.["error"] === "string"
-        ? errorPayload["error"]
-        : `Request failed with status ${response.status}`;
+    const errorCode =
+      typeof errorPayload?.["error"] === "string" ? errorPayload["error"] : null;
+    if (
+      response.status === 404 &&
+      (!errorCode || errorCode === "Not Found")
+    ) {
+      throw new PairingEndpointNotFoundError();
+    }
+
+    const message = errorCode ?? `Request failed with status ${response.status}`;
     throw new Error(message);
   }
 
@@ -348,6 +395,7 @@ async function pollForAppToken(
     publicKey: string;
     secretKey: Uint8Array;
     expiresAt: string;
+    baseUrl: string;
   }
 ): Promise<string> {
   const expiresAtMs = Date.parse(opts.expiresAt);
@@ -358,13 +406,17 @@ async function pollForAppToken(
   const intervalMs = 2000;
 
   while (Date.now() < deadline) {
-    const outcome = await requestAppPairing(
+    const outcome = await requestAppPairingWithBase(
       context,
       opts.appId,
-      opts.publicKey
+      opts.publicKey,
+      opts.baseUrl
     );
     if (outcome.status === "completed") {
-      return decryptAppPairingToken(outcome.encryptedToken, opts.secretKey);
+      return decryptAppPairingToken(
+        outcome.encryptedToken,
+        opts.secretKey
+      );
     }
     if (outcome.status === "expired") {
       throw new Error("Pairing request expired. Please try again.");
@@ -377,6 +429,67 @@ async function pollForAppToken(
 
 function buildPairingUrl(requestId: string): string {
   return `https://bee.computer.connect/${requestId}`;
+}
+
+function getPairingApiCandidates(env: Environment): string[] {
+  const override = process.env["BEE_PAIRING_API_URL"]?.trim();
+  if (override) {
+    return [normalizeBaseUrl(override)];
+  }
+
+  const config = getEnvironmentConfig(env);
+  const candidates = new Set<string>();
+  const derived = derivePairingApiUrl(config.apiUrl);
+  if (derived) {
+    candidates.add(derived);
+  }
+  candidates.add(normalizeBaseUrl(config.apiUrl));
+  return Array.from(candidates);
+}
+
+function derivePairingApiUrl(apiUrl: string): string | null {
+  const trimmed = apiUrl.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  if (trimmed.includes("app-api-developer.")) {
+    return normalizeBaseUrl(trimmed.replace("app-api-developer.", "app-api."));
+  }
+
+  if (trimmed.includes("developer.")) {
+    return normalizeBaseUrl(trimmed.replace("developer.", "api."));
+  }
+
+  if (trimmed.includes("-developer.")) {
+    return normalizeBaseUrl(trimmed.replace("-developer.", "."));
+  }
+
+  return null;
+}
+
+function normalizeBaseUrl(url: string): string {
+  return url.endsWith("/") ? url : `${url}/`;
+}
+
+type PairingFetchInit = RequestInit & {
+  tls?: { ca?: string | string[] };
+};
+
+async function fetchPairing(
+  env: Environment,
+  baseUrl: string,
+  init: PairingFetchInit
+): Promise<Response> {
+  const config = getEnvironmentConfig(env);
+  const url = new URL("/apps/pairing/request", baseUrl);
+  return fetch(url, { ...init, tls: { ca: [...config.caCerts] } });
+}
+
+class PairingEndpointNotFoundError extends Error {
+  constructor() {
+    super("Pairing endpoint not found.");
+  }
 }
 
 function getDefaultAppId(env: Environment): string {
