@@ -160,7 +160,8 @@ class ProgressBar {
     const bar = `${"#".repeat(filled)}${"-".repeat(empty)}`;
     const percent = Math.round(ratio * 100);
     const label = this.label ? ` ${this.label}` : "";
-    const text = `\r[${bar}] ${this.current}/${this.total} ${percent}%${label}`;
+    process.stdout.write("\r\x1b[2K");
+    const text = `[${bar}] ${this.current}/${this.total} ${percent}%${label}`;
     process.stdout.write(text);
   }
 }
