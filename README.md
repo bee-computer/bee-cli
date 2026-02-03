@@ -79,6 +79,8 @@ bee <command> [options]
 
 - `sync` - Export your Bee data to markdown files for AI agents. Options: `--output <dir>`, `--recent-days N`, `--only <facts|todos|daily|conversations>`.
 
+- `proxy` - Start a local HTTP proxy for the Bee API. Options: `--port N`.
+
 - `ping` - Run a quick connectivity check. Use `--count N` to repeat.
 
 - `version` - Print the CLI version. Use `--json` for JSON output.
