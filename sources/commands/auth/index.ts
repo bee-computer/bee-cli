@@ -379,7 +379,10 @@ function buildPairingUrl(requestId: string): string {
   return `https://bee.computer.connect/${requestId}`;
 }
 
-function getDefaultAppId(_env: Environment): string {
+function getDefaultAppId(env: Environment): string {
+  if (env === "staging") {
+    return "pk5z3uuzjpxj4f7frk6rsq2f";
+  }
   return "ph9fssu1kv1b0hns69fxf7rx";
 }
 
