@@ -1,10 +1,10 @@
 import type { Command } from "@/commands/types";
 import { printJson, requestDeveloperJson } from "@/commands/developerApi";
 
-const USAGE = "bee [--staging] today-brief";
+const USAGE = "bee today";
 
-export const todayBriefCommand: Command = {
-  name: "today-brief",
+export const todayCommand: Command = {
+  name: "today",
   description: "Fetch today's brief (calendar events and emails).",
   usage: USAGE,
   run: async (args, context) => {

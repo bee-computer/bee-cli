@@ -9,7 +9,7 @@ import { pingCommand } from "@/commands/ping";
 import { searchCommand } from "@/commands/search";
 import { syncCommand } from "@/commands/sync";
 import { todosCommand } from "@/commands/todos";
-import { todayBriefCommand } from "@/commands/todayBrief";
+import { todayCommand } from "@/commands/today";
 import { versionCommand } from "@/commands/version";
 import type { Environment } from "@/environment";
 
@@ -17,15 +17,15 @@ const BIN = "bee";
 
 const commands = [
   authCommand,
+  todayCommand,
   conversationsCommand,
   dailyCommand,
   factsCommand,
   meCommand,
-  pingCommand,
   searchCommand,
   syncCommand,
   todosCommand,
-  todayBriefCommand,
+  pingCommand,
   versionCommand,
 ] satisfies readonly Command[];
 
