@@ -1,4 +1,4 @@
-# bee-cli
+# 🐝 Bee CLI
 
 CLI client for bee.computer.
 
