@@ -1,10 +1,18 @@
-# 🐝 Bee CLI
+<div align="center"><img src="https://github.com/user-attachments/assets/553a248c-3dc4-4e5f-9140-becbca8948d0" width="400" title="Bee" alt="Bee"/></div>
+
+<h1 align="center">
+  CLI Client for Bee AI
+</h1>
+
+<h4 align="center">
+Connect Bee AI data with your tools
+</h4>
 
 CLI client for [Bee](https://www.bee.computer/) — the wearable AI that captures your conversations and learns about you.
 
-## What is Bee?
+## How does it work?
 
-Bee is a wearable personal AI device that sits quietly in the background, capturing your conversations and experiences throughout the day. It transforms ambient context into:
+Bee is an **encrypted** wearable personal AI device that sits quietly in the background, capturing your conversations and experiences throughout the day. It records and encrypts your data making it available only to you. Then inside of the secure compute units it transforms ambient context into:
 
 - **Conversation transcripts** with speaker identification
 - **Daily summaries** of your activities and discussions
