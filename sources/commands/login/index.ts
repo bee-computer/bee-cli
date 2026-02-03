@@ -1,7 +1,7 @@
-import { select } from "@inquirer/prompts";
 import type { Command, CommandContext } from "@/commands/types";
 import type { Environment } from "@/environment";
 import {
+  loadToken,
   saveToken,
   loadPairingState,
   savePairingState,
@@ -13,22 +13,18 @@ import {
   decryptAppPairingToken,
   generateAppPairingKeyPair,
 } from "@/utils/appPairingCrypto";
-import { emojiHash } from "@/utils/emojiHash";
-import { openBrowser } from "@/utils/browser";
 import { renderQrCode } from "@/utils/qrCode";
 import { fetchClientMe } from "@/client/clientMe";
 
 type LoginOptions = {
   token?: string;
   tokenStdin: boolean;
-  agent: boolean;
+  qr: boolean;
 };
-
-type DeviceAuthMethod = "browser" | "qr";
 
 const USAGE = [
   "bee login",
-  "bee login --agent",
+  "bee login --qr",
   "bee login --token <token>",
   "bee login --token-stdin",
 ].join("\n");
@@ -62,7 +58,27 @@ async function handleLogin(
   }
 
   if (!token) {
-    token = await loginWithAppPairing(context, options.agent);
+    // Check if already authenticated
+    const existingToken = await loadToken(context.env);
+    if (existingToken) {
+      try {
+        const user = await fetchClientMe(context, existingToken);
+        const name = [user.first_name, user.last_name].filter(Boolean).join(" ");
+        console.log("");
+        console.log(`You're already connected to Bee as ${name}.`);
+        console.log("");
+        console.log("If you need to switch to a different account, please run 'bee logout' first.");
+        console.log("");
+        console.log("Important: Only log out if you intentionally want to disconnect this device.");
+        console.log("Re-authenticating will require access to the Bee app on your phone.");
+        console.log("");
+        return;
+      } catch {
+        // Token is invalid, proceed with login
+      }
+    }
+
+    token = await loginWithAppPairing(context, options.qr);
   }
 
   if (!token) {
@@ -75,17 +91,10 @@ async function handleLogin(
 
   await saveToken(context.env, token);
 
-  if (options.agent) {
-    printAgentSuccessMessage(user);
-  } else if (user) {
-    const name = [user.first_name, user.last_name].filter(Boolean).join(" ");
-    console.log(`Authenticated as ${name} (id ${user.id}).`);
-  } else {
-    console.log("Token stored.");
-  }
+  printSuccessMessage(user);
 }
 
-function printAgentSuccessMessage(user: {
+function printSuccessMessage(user: {
   id: number;
   first_name: string;
   last_name: string | null;
@@ -101,7 +110,7 @@ function printAgentSuccessMessage(user: {
 function parseLoginArgs(args: readonly string[]): LoginOptions {
   let token: string | undefined;
   let tokenStdin = false;
-  let agent = false;
+  let qr = false;
   const positionals: string[] = [];
 
   for (let i = 0; i < args.length; i += 1) {
@@ -125,8 +134,8 @@ function parseLoginArgs(args: readonly string[]): LoginOptions {
       continue;
     }
 
-    if (arg === "--agent") {
-      agent = true;
+    if (arg === "--qr") {
+      qr = true;
       continue;
     }
 
@@ -141,7 +150,7 @@ function parseLoginArgs(args: readonly string[]): LoginOptions {
     throw new Error(`Unexpected arguments: ${positionals.join(" ")}`);
   }
 
-  const options: LoginOptions = { tokenStdin, agent };
+  const options: LoginOptions = { tokenStdin, qr };
   if (token !== undefined) {
     options.token = token;
   }
@@ -175,52 +184,7 @@ async function readTokenFromStdin(): Promise<string> {
 
 async function loginWithAppPairing(
   context: CommandContext,
-  agentMode: boolean
-): Promise<string> {
-  if (!agentMode && !process.stdin.isTTY) {
-    throw new Error(
-      "Interactive login requires a TTY. Use --token or --token-stdin."
-    );
-  }
-
-  if (agentMode) {
-    return await loginWithAppPairingAgentMode(context);
-  }
-
-  const appId = getDefaultAppId(context.env);
-  const keyPair = generateAppPairingKeyPair();
-  const publicKey = keyPair.publicKeyBase64;
-  const secretKey = keyPair.secretKey;
-  const emoji = shouldShowEmojiHash()
-    ? formatEmojiHash(keyPair.publicKeyBytes)
-    : null;
-
-  const initial = await requestAppPairing(context.env, appId, publicKey);
-
-  if (initial.status === "completed") {
-    return decryptAppPairingToken(initial.encryptedToken, secretKey);
-  }
-
-  if (initial.status === "expired") {
-    throw new Error("Pairing request expired. Please try again.");
-  }
-
-  const pairingUrl = buildPairingUrl(initial.requestId);
-  const method = await selectAuthMethod();
-  await presentAppPairing(method, pairingUrl, initial.requestId, emoji);
-  console.log("Waiting for authorization...");
-
-  return await pollForAppToken({
-    env: context.env,
-    appId,
-    publicKey,
-    secretKey,
-    expiresAt: initial.expiresAt,
-  });
-}
-
-async function loginWithAppPairingAgentMode(
-  context: CommandContext
+  useQr: boolean
 ): Promise<string> {
   const existingState = await loadPairingState(context.env);
 
@@ -229,7 +193,7 @@ async function loginWithAppPairingAgentMode(
     const isExpired = !Number.isNaN(expiresAtMs) && Date.now() >= expiresAtMs;
 
     if (!isExpired) {
-      printAgentWelcomeMessage(existingState.pairingUrl, existingState.expiresAt, "resumed");
+      printWelcomeMessage(existingState.pairingUrl, existingState.expiresAt, "resumed", useQr);
 
       const secretKey = Buffer.from(existingState.secretKey, "base64");
       try {
@@ -279,7 +243,7 @@ async function loginWithAppPairingAgentMode(
   await savePairingState(context.env, state);
 
   const authStatus = existingState ? "reset" : "new";
-  printAgentWelcomeMessage(pairingUrl, initial.expiresAt, authStatus);
+  printWelcomeMessage(pairingUrl, initial.expiresAt, authStatus, useQr);
 
   try {
     const token = await pollForAppToken({
@@ -294,56 +258,6 @@ async function loginWithAppPairingAgentMode(
   } catch (error) {
     throw error;
   }
-}
-
-async function selectAuthMethod(): Promise<DeviceAuthMethod> {
-  return await select({
-    message: "How would you like to authenticate?",
-    choices: [
-      { name: "Open a browser window", value: "browser" },
-      { name: "Show a QR code", value: "qr" },
-    ],
-  });
-}
-
-async function presentAppPairing(
-  method: DeviceAuthMethod,
-  pairingUrl: string,
-  requestId: string,
-  emojiHashValue: string | null
-): Promise<void> {
-  console.log(`Pairing request: ${requestId}`);
-  console.log(`Open this URL to approve the app: ${pairingUrl}`);
-  if (emojiHashValue) {
-    console.log(`Emoji hash: ${emojiHashValue}`);
-  }
-
-  if (method === "browser") {
-    const opened = await openBrowser(pairingUrl);
-    if (!opened) {
-      console.log("Unable to open the browser automatically.");
-    }
-    return;
-  }
-
-  const qrCode = await renderQrCode(pairingUrl);
-  console.log(qrCode);
-}
-
-function formatEmojiHash(publicKeyBytes: Uint8Array): string | null {
-  const emojis = emojiHash(publicKeyBytes, 4);
-  if (emojis.length === 0) {
-    return null;
-  }
-  return emojis.join(" ");
-}
-
-function shouldShowEmojiHash(): boolean {
-  const value = process.env["BEE_EMOJI_HASH"]?.trim().toLowerCase();
-  if (!value) {
-    return false;
-  }
-  return ["1", "true", "on", "yes"].includes(value);
 }
 
 async function pollForAppToken(opts: {
@@ -398,13 +312,14 @@ async function sleep(durationMs: number): Promise<void> {
   });
 }
 
-type AgentAuthStatus = "new" | "resumed" | "reset";
+type AuthStatus = "new" | "resumed" | "reset";
 
-function printAgentWelcomeMessage(
+async function printWelcomeMessage(
   pairingUrl: string,
   expiresAt: string,
-  status: AgentAuthStatus
-): void {
+  status: AuthStatus,
+  useQr: boolean
+): Promise<void> {
   const expiresAtMs = Date.parse(expiresAt);
   const remainingMs = expiresAtMs - Date.now();
   const remainingMinutes = Math.max(1, Math.ceil(remainingMs / 60000));
@@ -438,6 +353,13 @@ function printAgentWelcomeMessage(
   );
   console.log("");
   console.log(`Authentication link: ${pairingUrl}`);
+
+  if (useQr) {
+    console.log("");
+    const qrCode = await renderQrCode(pairingUrl);
+    console.log(qrCode);
+  }
+
   console.log("");
   console.log(
     "Once the link is opened, follow the instructions to approve the connection."
