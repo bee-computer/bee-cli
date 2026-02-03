@@ -300,9 +300,9 @@ function formatEmojiHash(publicKeyBytes: Uint8Array): string | null {
 function shouldShowEmojiHash(): boolean {
   const value = process.env["BEE_EMOJI_HASH"]?.trim().toLowerCase();
   if (!value) {
-    return true;
+    return false;
   }
-  return !["0", "false", "off", "no"].includes(value);
+  return ["1", "true", "on", "yes"].includes(value);
 }
 
 async function pollForAppToken(opts: {
