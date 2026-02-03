@@ -517,13 +517,27 @@ async function fetchAllDailySummaries(
   task: ProgressTask
 ): Promise<DailySummary[]> {
   const items: DailySummary[] = [];
+  let cursor: string | undefined;
   task.addTotal(1);
-  const data = await requestClientJson(context, "/v1/daily?limit=100", {
-    method: "GET",
-  });
-  const payload = parseDailyList(data);
-  items.push(...payload.daily_summaries);
-  task.advance(1);
+
+  while (true) {
+    const params = new URLSearchParams();
+    params.set("limit", String(PAGE_SIZE));
+    if (cursor) {
+      params.set("cursor", cursor);
+    }
+    const path = params.toString() ? `/v1/daily?${params}` : "/v1/daily";
+    const data = await requestClientJson(context, path, { method: "GET" });
+    const payload = parseDailyList(data);
+    items.push(...payload.daily_summaries);
+    task.advance(1);
+    if (!payload.next_cursor) {
+      break;
+    }
+    task.addTotal(1);
+    cursor = payload.next_cursor;
+  }
+
   return items;
 }
 
@@ -879,15 +893,23 @@ function parseTodosList(payload: unknown): { todos: Todo[]; next_cursor: string 
   };
 }
 
-function parseDailyList(payload: unknown): { daily_summaries: DailySummary[] } {
+function parseDailyList(
+  payload: unknown
+): { daily_summaries: DailySummary[]; next_cursor: string | null } {
   if (!payload || typeof payload !== "object") {
     throw new Error("Invalid daily response.");
   }
-  const data = payload as { daily_summaries?: DailySummary[] };
+  const data = payload as {
+    daily_summaries?: DailySummary[];
+    next_cursor?: string | null;
+  };
   if (!Array.isArray(data.daily_summaries)) {
     throw new Error("Invalid daily response.");
   }
-  return { daily_summaries: data.daily_summaries };
+  return {
+    daily_summaries: data.daily_summaries,
+    next_cursor: data.next_cursor ?? null,
+  };
 }
 
 function parseDailyDetail(payload: unknown): { daily_summary: DailySummaryDetail } {
