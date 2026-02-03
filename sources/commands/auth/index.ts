@@ -226,7 +226,9 @@ async function loginWithAppPairing(context: CommandContext): Promise<string> {
   const keyPair = generateAppPairingKeyPair();
   const publicKey = keyPair.publicKeyBase64;
   const secretKey = keyPair.secretKey;
-  const emoji = formatEmojiHash(keyPair.publicKeyBytes);
+  const emoji = shouldShowEmojiHash()
+    ? formatEmojiHash(keyPair.publicKeyBytes)
+    : null;
 
   const initial = await requestAppPairing(context.env, appId, publicKey);
 
@@ -293,6 +295,14 @@ function formatEmojiHash(publicKeyBytes: Uint8Array): string | null {
     return null;
   }
   return emojis.join(" ");
+}
+
+function shouldShowEmojiHash(): boolean {
+  const value = process.env["BEE_EMOJI_HASH"]?.trim().toLowerCase();
+  if (!value) {
+    return true;
+  }
+  return !["0", "false", "off", "no"].includes(value);
 }
 
 async function pollForAppToken(opts: {
