@@ -7,6 +7,7 @@ import {
   decryptAppPairingToken,
   generateAppPairingKeyPair,
 } from "@/utils/appPairingCrypto";
+import { emojiHash } from "@/utils/emojiHash";
 import { openBrowser } from "@/utils/browser";
 import { renderQrCode } from "@/utils/qrCode";
 
@@ -225,6 +226,7 @@ async function loginWithAppPairing(context: CommandContext): Promise<string> {
   const keyPair = generateAppPairingKeyPair();
   const publicKey = keyPair.publicKeyBase64;
   const secretKey = keyPair.secretKey;
+  const emoji = formatEmojiHash(keyPair.publicKeyBytes);
 
   const initial = await requestAppPairing(context.env, appId, publicKey);
 
@@ -239,7 +241,7 @@ async function loginWithAppPairing(context: CommandContext): Promise<string> {
   const pairingUrl = buildPairingUrl(initial.requestId);
   const method = await selectAuthMethod();
 
-  await presentAppPairing(method, pairingUrl, initial.requestId);
+  await presentAppPairing(method, pairingUrl, initial.requestId, emoji);
   console.log("Waiting for authorization...");
 
   return await pollForAppToken({
@@ -264,10 +266,14 @@ async function selectAuthMethod(): Promise<DeviceAuthMethod> {
 async function presentAppPairing(
   method: DeviceAuthMethod,
   pairingUrl: string,
-  requestId: string
+  requestId: string,
+  emojiHashValue: string | null
 ): Promise<void> {
   console.log(`Pairing request: ${requestId}`);
   console.log(`Open this URL to approve the app: ${pairingUrl}`);
+  if (emojiHashValue) {
+    console.log(`Emoji hash: ${emojiHashValue}`);
+  }
 
   if (method === "browser") {
     const opened = await openBrowser(pairingUrl);
@@ -279,6 +285,14 @@ async function presentAppPairing(
 
   const qrCode = await renderQrCode(pairingUrl);
   console.log(qrCode);
+}
+
+function formatEmojiHash(publicKeyBytes: Uint8Array): string | null {
+  const emojis = emojiHash(publicKeyBytes, 4);
+  if (emojis.length === 0) {
+    return null;
+  }
+  return emojis.join(" ");
 }
 
 async function pollForAppToken(opts: {

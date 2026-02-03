@@ -6,6 +6,7 @@ const APP_PAIRING_PUBLIC_KEY_SIZE = 32;
 
 export type AppPairingKeyPair = {
   publicKeyBase64: string;
+  publicKeyBytes: Uint8Array;
   secretKey: Uint8Array;
 };
 
@@ -14,6 +15,7 @@ export function generateAppPairingKeyPair(): AppPairingKeyPair {
   const publicKeyBase64 = Buffer.from(keyPair.publicKey).toString("base64");
   return {
     publicKeyBase64,
+    publicKeyBytes: keyPair.publicKey,
     secretKey: keyPair.secretKey,
   };
 }
