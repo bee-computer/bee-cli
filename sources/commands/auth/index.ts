@@ -431,41 +431,18 @@ function buildPairingUrl(requestId: string): string {
   return `https://bee.computer.connect/${requestId}`;
 }
 
+const PAIRING_API_URLS: Record<Environment, string> = {
+  prod: "https://auth.beeai-services.com",
+  staging: "https://public-api.korshaks.people.amazon.dev",
+};
+
 function getPairingApiCandidates(env: Environment): string[] {
   const override = process.env["BEE_PAIRING_API_URL"]?.trim();
   if (override) {
     return [normalizeBaseUrl(override)];
   }
 
-  const config = getEnvironmentConfig(env);
-  const candidates = new Set<string>();
-  const derived = derivePairingApiUrl(config.apiUrl);
-  if (derived) {
-    candidates.add(derived);
-  }
-  candidates.add(normalizeBaseUrl(config.apiUrl));
-  return Array.from(candidates);
-}
-
-function derivePairingApiUrl(apiUrl: string): string | null {
-  const trimmed = apiUrl.trim();
-  if (!trimmed) {
-    return null;
-  }
-
-  if (trimmed.includes("app-api-developer.")) {
-    return normalizeBaseUrl(trimmed.replace("app-api-developer.", "app-api."));
-  }
-
-  if (trimmed.includes("developer.")) {
-    return normalizeBaseUrl(trimmed.replace("developer.", "api."));
-  }
-
-  if (trimmed.includes("-developer.")) {
-    return normalizeBaseUrl(trimmed.replace("-developer.", "."));
-  }
-
-  return null;
+  return [normalizeBaseUrl(PAIRING_API_URLS[env])];
 }
 
 function normalizeBaseUrl(url: string): string {
@@ -481,9 +458,23 @@ async function fetchPairing(
   baseUrl: string,
   init: PairingFetchInit
 ): Promise<Response> {
-  const config = getEnvironmentConfig(env);
   const url = new URL("/apps/pairing/request", baseUrl);
-  return fetch(url, { ...init, tls: { ca: [...config.caCerts] } });
+  if (shouldUseCustomCa(env, baseUrl)) {
+    const config = getEnvironmentConfig(env);
+    return fetch(url, { ...init, tls: { ca: [...config.caCerts] } });
+  }
+  return fetch(url, init);
+}
+
+function shouldUseCustomCa(env: Environment, baseUrl: string): boolean {
+  try {
+    const config = getEnvironmentConfig(env);
+    const baseHost = new URL(baseUrl).host;
+    const configHost = new URL(config.apiUrl).host;
+    return baseHost === configHost;
+  } catch {
+    return false;
+  }
 }
 
 class PairingEndpointNotFoundError extends Error {
