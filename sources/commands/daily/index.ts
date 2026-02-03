@@ -2,7 +2,7 @@ import type { Command, CommandContext } from "@/commands/types";
 import { printJson, requestClientJson } from "@/client/clientApi";
 
 const USAGE = [
-  "bee daily list [--limit N]",
+  "bee daily list [--limit N] [--cursor CURSOR]",
   "bee daily get <id>",
 ].join("\n");
 
@@ -31,6 +31,7 @@ export const dailyCommand: Command = {
 
 type ListOptions = {
   limit?: number;
+  cursor?: string;
 };
 
 async function handleList(
@@ -42,6 +43,9 @@ async function handleList(
 
   if (options.limit !== undefined) {
     params.set("limit", String(options.limit));
+  }
+  if (options.cursor) {
+    params.set("cursor", options.cursor);
   }
 
   const suffix = params.toString();
@@ -70,6 +74,18 @@ function parseListArgs(args: readonly string[]): ListOptions {
         throw new Error("--limit must be a positive integer");
       }
       options.limit = parsed;
+      i += 1;
+      continue;
+    }
+    if (arg === "--cursor") {
+      const value = args[i + 1];
+      if (value === undefined) {
+        throw new Error("--cursor requires a value");
+      }
+      if (value.trim().length === 0) {
+        throw new Error("--cursor must be a non-empty string");
+      }
+      options.cursor = value;
       i += 1;
       continue;
     }
