@@ -4,7 +4,7 @@ import type { Command, CommandContext } from "@/commands/types";
 import { requestDeveloperJson } from "@/commands/developerApi";
 
 const USAGE =
-  "bee [--staging] sync [--output <dir>] [--recent-days N]";
+  "bee [--staging] sync [--output <dir>] [--recent-days N] [--only <facts|todos|daily|conversations>]";
 
 const DEFAULT_OUTPUT_DIR = "bee-sync";
 const DEFAULT_RECENT_DAYS = 3;
@@ -99,9 +99,18 @@ type ConversationDetail = {
   } | null;
 };
 
+type ConversationSummary = {
+  id: number;
+  start_time: number;
+  created_at: number;
+};
+
+type SyncTarget = "facts" | "todos" | "daily" | "conversations";
+
 type SyncOptions = {
   outputDir: string;
   recentDays: number;
+  targets: Set<SyncTarget>;
 };
 
 export const syncCommand: Command = {
@@ -216,6 +225,7 @@ class ProgressTask {
 function parseSyncArgs(args: readonly string[]): SyncOptions {
   let outputDir = DEFAULT_OUTPUT_DIR;
   let recentDays = DEFAULT_RECENT_DAYS;
+  const onlyTargets: SyncTarget[] = [];
   const positionals: string[] = [];
 
   for (let i = 0; i < args.length; i += 1) {
@@ -248,6 +258,17 @@ function parseSyncArgs(args: readonly string[]): SyncOptions {
       continue;
     }
 
+    if (arg === "--only") {
+      const value = args[i + 1];
+      if (value === undefined) {
+        throw new Error("--only requires a value");
+      }
+      const parsed = parseTargets(value);
+      onlyTargets.push(...parsed);
+      i += 1;
+      continue;
+    }
+
     if (arg.startsWith("-")) {
       throw new Error(`Unknown option: ${arg}`);
     }
@@ -259,7 +280,50 @@ function parseSyncArgs(args: readonly string[]): SyncOptions {
     throw new Error(`Unexpected arguments: ${positionals.join(" ")}`);
   }
 
-  return { outputDir, recentDays };
+  const targets = resolveTargets(onlyTargets);
+  return { outputDir, recentDays, targets };
+}
+
+function parseTargets(value: string): SyncTarget[] {
+  const parts = value
+    .split(",")
+    .map((part) => part.trim().toLowerCase())
+    .filter((part) => part.length > 0);
+
+  if (parts.length === 0) {
+    throw new Error("--only requires a non-empty value");
+  }
+
+  if (parts.includes("all")) {
+    return ["facts", "todos", "daily", "conversations"];
+  }
+
+  const targets: SyncTarget[] = [];
+  for (const part of parts) {
+    if (isSyncTarget(part)) {
+      targets.push(part);
+      continue;
+    }
+    throw new Error(`Unknown sync target: ${part}`);
+  }
+
+  return targets;
+}
+
+function resolveTargets(onlyTargets: SyncTarget[]): Set<SyncTarget> {
+  if (onlyTargets.length === 0) {
+    return new Set<SyncTarget>(["facts", "todos", "daily"]);
+  }
+  return new Set<SyncTarget>(onlyTargets);
+}
+
+function isSyncTarget(value: string): value is SyncTarget {
+  return (
+    value === "facts" ||
+    value === "todos" ||
+    value === "daily" ||
+    value === "conversations"
+  );
 }
 
 async function syncAll(
@@ -267,59 +331,116 @@ async function syncAll(
   options: SyncOptions
 ): Promise<void> {
   const progress = new MultiProgress();
-  const factsTask = progress.addTask("facts");
-  const todosTask = progress.addTask("todos");
-  const dailyListTask = progress.addTask("daily list");
-  const dailySyncTask = progress.addTask("daily sync");
-  const conversationTask = progress.addTask("conversations");
+  const factsTask = options.targets.has("facts")
+    ? progress.addTask("facts")
+    : null;
+  const todosTask = options.targets.has("todos")
+    ? progress.addTask("todos")
+    : null;
+  const dailyListTask = options.targets.has("daily")
+    ? progress.addTask("daily list")
+    : null;
+  const dailySyncTask = options.targets.has("daily")
+    ? progress.addTask("daily sync")
+    : null;
+  const dailyConversationTask = options.targets.has("daily")
+    ? progress.addTask("conversations")
+    : null;
+  const conversationListTask = options.targets.has("conversations")
+    ? progress.addTask("conversation list")
+    : null;
+  const conversationTask = options.targets.has("conversations")
+    ? progress.addTask("all conversations")
+    : null;
   await mkdir(options.outputDir, { recursive: true });
 
   const [facts, todos, dailySummaries] = await Promise.all([
-    fetchAllFacts(context, factsTask),
-    fetchAllTodos(context, todosTask),
-    fetchAllDailySummaries(context, dailyListTask),
+    factsTask ? fetchAllFacts(context, factsTask) : Promise.resolve<Fact[]>([]),
+    todosTask ? fetchAllTodos(context, todosTask) : Promise.resolve<Todo[]>([]),
+    dailyListTask
+      ? fetchAllDailySummaries(context, dailyListTask)
+      : Promise.resolve<DailySummary[]>([]),
   ]);
-  factsTask.setLabel("facts done");
-  todosTask.setLabel("todos done");
-  dailyListTask.setLabel("daily list done");
-
-  await writeFactsMarkdown(options.outputDir, facts);
-  await writeTodosMarkdown(options.outputDir, todos);
-
-  const sortedDaily = [...dailySummaries].sort((a, b) => {
-    return dailySortKey(a) - dailySortKey(b);
-  });
-
-  const recent = [...sortedDaily]
-    .sort((a, b) => dailySortKey(b) - dailySortKey(a))
-    .slice(0, options.recentDays);
-  dailySyncTask.setTotal(sortedDaily.length + recent.length);
-  conversationTask.reset();
-  for (const summary of sortedDaily) {
-    dailySyncTask.setLabel(`daily ${resolveDailyFolderName(summary)}`);
-    await syncDailySummary(
-      context,
-      options.outputDir,
-      summary.id,
-      dailySyncTask,
-      conversationTask
-    );
+  if (factsTask) {
+    factsTask.setLabel("facts done");
+    await writeFactsMarkdown(options.outputDir, facts);
+  }
+  if (todosTask) {
+    todosTask.setLabel("todos done");
+    await writeTodosMarkdown(options.outputDir, todos);
+  }
+  if (dailyListTask) {
+    dailyListTask.setLabel("daily list done");
   }
 
-  if (recent.length > 0) {
-    for (const summary of recent) {
-      dailySyncTask.setLabel(`recent ${resolveDailyFolderName(summary)}`);
+  if (options.targets.has("daily") && dailySyncTask && dailyConversationTask) {
+    const sortedDaily = [...dailySummaries].sort((a, b) => {
+      return dailySortKey(a) - dailySortKey(b);
+    });
+
+    const recent = [...sortedDaily]
+      .sort((a, b) => dailySortKey(b) - dailySortKey(a))
+      .slice(0, options.recentDays);
+    dailySyncTask.setTotal(sortedDaily.length + recent.length);
+    dailyConversationTask.reset();
+    for (const summary of sortedDaily) {
+      dailySyncTask.setLabel(`daily ${resolveDailyFolderName(summary)}`);
       await syncDailySummary(
         context,
         options.outputDir,
         summary.id,
         dailySyncTask,
-        conversationTask
+        dailyConversationTask
       );
     }
+
+    if (recent.length > 0) {
+      for (const summary of recent) {
+        dailySyncTask.setLabel(`recent ${resolveDailyFolderName(summary)}`);
+        await syncDailySummary(
+          context,
+          options.outputDir,
+          summary.id,
+          dailySyncTask,
+          dailyConversationTask
+        );
+      }
+    }
+    dailySyncTask.setLabel("daily sync done");
+    dailyConversationTask.setLabel("conversations done");
   }
-  dailySyncTask.setLabel("daily sync done");
-  conversationTask.setLabel("conversations done");
+
+  if (options.targets.has("conversations") && conversationTask) {
+    const conversations = conversationListTask
+      ? await fetchAllConversations(context, conversationListTask)
+      : [];
+    if (conversationListTask) {
+      conversationListTask.setLabel("conversation list done");
+    }
+
+    const sortedConversations = [...conversations].sort(
+      (a, b) => conversationSortKey(a) - conversationSortKey(b)
+    );
+    conversationTask.setTotal(sortedConversations.length);
+
+    const conversationsDir = path.join(options.outputDir, "conversations");
+    await mkdir(conversationsDir, { recursive: true });
+    await runWithConcurrency(
+      sortedConversations,
+      CONVERSATION_CONCURRENCY,
+      async (conversation) => {
+        const detail = await fetchConversation(context, conversation.id);
+        const markdown = formatConversationMarkdown(detail);
+        await writeFile(
+          path.join(conversationsDir, `${conversation.id}.md`),
+          markdown,
+          "utf8"
+        );
+        conversationTask.advance(1);
+      }
+    );
+    conversationTask.setLabel("all conversations done");
+  }
   progress.finish();
 }
 
@@ -404,6 +525,41 @@ async function fetchAllDailySummaries(
   items.push(...payload.daily_summaries);
   task.advance(1);
   return items;
+}
+
+async function fetchAllConversations(
+  context: CommandContext,
+  task: ProgressTask
+): Promise<ConversationSummary[]> {
+  const items: ConversationSummary[] = [];
+  let cursor: string | undefined;
+  task.addTotal(1);
+
+  while (true) {
+    const params = new URLSearchParams();
+    params.set("limit", String(PAGE_SIZE));
+    if (cursor) {
+      params.set("cursor", cursor);
+    }
+    const path = params.toString()
+      ? `/v1/conversations?${params}`
+      : "/v1/conversations";
+    const data = await requestDeveloperJson(context, path, { method: "GET" });
+    const payload = parseConversationList(data);
+    items.push(...payload.conversations);
+    task.advance(1);
+    if (!payload.next_cursor) {
+      break;
+    }
+    task.addTotal(1);
+    cursor = payload.next_cursor;
+  }
+
+  return items;
+}
+
+function conversationSortKey(conversation: ConversationSummary): number {
+  return conversation.start_time ?? conversation.created_at ?? conversation.id;
 }
 
 async function syncDailySummary(
@@ -743,6 +899,25 @@ function parseDailyDetail(payload: unknown): { daily_summary: DailySummaryDetail
     throw new Error("Invalid daily detail response.");
   }
   return { daily_summary: data.daily_summary };
+}
+
+function parseConversationList(
+  payload: unknown
+): { conversations: ConversationSummary[]; next_cursor: string | null } {
+  if (!payload || typeof payload !== "object") {
+    throw new Error("Invalid conversation list response.");
+  }
+  const data = payload as {
+    conversations?: ConversationSummary[];
+    next_cursor?: string | null;
+  };
+  if (!Array.isArray(data.conversations)) {
+    throw new Error("Invalid conversation list response.");
+  }
+  return {
+    conversations: data.conversations,
+    next_cursor: data.next_cursor ?? null,
+  };
 }
 
 function parseConversationDetail(
