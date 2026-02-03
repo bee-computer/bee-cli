@@ -317,7 +317,7 @@ async function pollForAppToken(opts: {
 }
 
 function buildPairingUrl(requestId: string): string {
-  return `https://bee.computer.connect/${requestId}`;
+  return `https://bee.computer/connect/${requestId}`;
 }
 
 function getDefaultAppId(env: Environment): string {
