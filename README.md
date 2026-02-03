@@ -48,7 +48,7 @@ bee <command> [options]
 - `search` - Search your data.
   - `search conversations --query <text>` - Search conversations. Options: `--limit N`, `--cursor <cursor>`.
 
-- `sync` - Export your Bee data to markdown files for AI agents. Options: `--output <dir>`, `--recent-days N`.
+- `sync` - Export your Bee data to markdown files for AI agents. Options: `--output <dir>`, `--recent-days N`, `--only <facts|todos|daily|conversations>`.
 
 - `ping` - Run a quick connectivity check. Use `--count N` to repeat.
 
@@ -66,7 +66,7 @@ The `sync` command exports all your Bee data to a local directory as markdown fi
 ### Usage
 
 ```bash
-bee sync [--output <dir>] [--recent-days N]
+bee sync [--output <dir>] [--recent-days N] [--only <facts|todos|daily|conversations>]
 ```
 
 ### Options
@@ -75,6 +75,7 @@ bee sync [--output <dir>] [--recent-days N]
 |--------|---------|-------------|
 | `--output <dir>` | `bee-sync` | Output directory for synced files |
 | `--recent-days N` | `3` | Number of recent days to sync with full conversation details |
+| `--only <targets>` | all | Limit sync to a comma-separated list: `facts`, `todos`, `daily`, `conversations` |
 
 ### Output Structure
 
