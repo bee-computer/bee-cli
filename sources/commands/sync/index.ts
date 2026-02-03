@@ -4,12 +4,11 @@ import type { Command, CommandContext } from "@/commands/types";
 import { requestClientJson } from "@/client/clientApi";
 
 const USAGE =
-  "bee sync [--output <dir>] [--recent-days N] [--only <facts|todos|daily|conversations>]";
+  "bee sync [--output <dir>] [--only <facts|todos|daily|conversations>]";
 
 const DEFAULT_OUTPUT_DIR = "bee-sync";
-const DEFAULT_RECENT_DAYS = 3;
 const PAGE_SIZE = 100;
-const CONVERSATION_CONCURRENCY = 4;
+const SYNC_CONCURRENCY = 4;
 const FALLBACK_TIMEZONE = "America/Los_Angeles";
 const DEFAULT_TIMEZONE = resolveDefaultTimezone();
 
@@ -114,7 +113,6 @@ type SyncTarget = "facts" | "todos" | "daily" | "conversations";
 
 type SyncOptions = {
   outputDir: string;
-  recentDays: number;
   targets: Set<SyncTarget>;
 };
 
@@ -256,13 +254,6 @@ class ProgressTask {
     this.progress.render();
   }
 
-  reset(): void {
-    this.current = 0;
-    this.total = 0;
-    this.active = true;
-    this.progress.render();
-  }
-
   complete(): void {
     this.active = false;
     this.progress.render();
@@ -282,7 +273,6 @@ class ProgressTask {
 
 function parseSyncArgs(args: readonly string[]): SyncOptions {
   let outputDir = DEFAULT_OUTPUT_DIR;
-  let recentDays = DEFAULT_RECENT_DAYS;
   const onlyTargets: SyncTarget[] = [];
   const positionals: string[] = [];
 
@@ -298,20 +288,6 @@ function parseSyncArgs(args: readonly string[]): SyncOptions {
         throw new Error("--output requires a value");
       }
       outputDir = value;
-      i += 1;
-      continue;
-    }
-
-    if (arg === "--recent-days") {
-      const value = args[i + 1];
-      if (value === undefined) {
-        throw new Error("--recent-days requires a value");
-      }
-      const parsed = Number.parseInt(value, 10);
-      if (!Number.isFinite(parsed) || parsed <= 0) {
-        throw new Error("--recent-days must be a positive integer");
-      }
-      recentDays = parsed;
       i += 1;
       continue;
     }
@@ -339,7 +315,7 @@ function parseSyncArgs(args: readonly string[]): SyncOptions {
   }
 
   const targets = resolveTargets(onlyTargets);
-  return { outputDir, recentDays, targets };
+  return { outputDir, targets };
 }
 
 function parseTargets(value: string): SyncTarget[] {
@@ -370,7 +346,7 @@ function parseTargets(value: string): SyncTarget[] {
 
 function resolveTargets(onlyTargets: SyncTarget[]): Set<SyncTarget> {
   if (onlyTargets.length === 0) {
-    return new Set<SyncTarget>(["facts", "todos", "daily"]);
+    return new Set<SyncTarget>(["facts", "todos", "daily", "conversations"]);
   }
   return new Set<SyncTarget>(onlyTargets);
 }
@@ -389,126 +365,114 @@ async function syncAll(
   options: SyncOptions
 ): Promise<void> {
   const progress = new MultiProgress();
-  const factsTask = options.targets.has("facts")
-    ? progress.addTask("facts")
-    : null;
-  const todosTask = options.targets.has("todos")
-    ? progress.addTask("todos")
-    : null;
-  const dailyListTask = options.targets.has("daily")
-    ? progress.addTask("daily list")
-    : null;
-  const dailySyncTask = options.targets.has("daily")
-    ? progress.addTask("daily sync")
-    : null;
-  const conversationListTask = options.targets.has("conversations")
-    ? progress.addTask("conversation list")
-    : null;
-  const conversationTask = options.targets.has("conversations")
-    ? progress.addTask("all conversations")
-    : null;
   await mkdir(options.outputDir, { recursive: true });
 
-  const [facts, todos, dailySummaries, conversations] = await Promise.all([
-    factsTask ? fetchAllFacts(context, factsTask) : Promise.resolve<Fact[]>([]),
-    todosTask ? fetchAllTodos(context, todosTask) : Promise.resolve<Todo[]>([]),
-    dailyListTask
-      ? fetchAllDailySummaries(context, dailyListTask)
-      : Promise.resolve<DailySummary[]>([]),
-    conversationListTask
-      ? fetchAllConversations(context, conversationListTask)
-      : Promise.resolve<ConversationSummary[]>([]),
-  ]);
-  if (factsTask) {
-    factsTask.setLabel("facts done");
-    factsTask.complete();
-    await writeFactsMarkdown(options.outputDir, facts);
-  }
-  if (todosTask) {
-    todosTask.setLabel("todos done");
-    todosTask.complete();
-    await writeTodosMarkdown(options.outputDir, todos);
-  }
-  if (dailyListTask) {
-    dailyListTask.setLabel("daily list done");
-    dailyListTask.complete();
-  }
-  if (conversationListTask) {
-    conversationListTask.setLabel("conversation list done");
-    conversationListTask.complete();
+  const syncPromises: Promise<void>[] = [];
+
+  if (options.targets.has("facts")) {
+    const task = progress.addTask("facts");
+    syncPromises.push(syncFacts(context, options.outputDir, task));
   }
 
-  const dailySyncPromise =
-    options.targets.has("daily") && dailySyncTask
-      ? (async () => {
-          const sortedDaily = [...dailySummaries].sort((a, b) => {
-            return dailySortKey(a) - dailySortKey(b);
-          });
+  if (options.targets.has("todos")) {
+    const task = progress.addTask("todos");
+    syncPromises.push(syncTodos(context, options.outputDir, task));
+  }
 
-          const recent = [...sortedDaily]
-            .sort((a, b) => dailySortKey(b) - dailySortKey(a))
-            .slice(0, options.recentDays);
-          dailySyncTask.setTotal(sortedDaily.length + recent.length);
-          for (const summary of sortedDaily) {
-            dailySyncTask.setLabel(`daily ${resolveDailyFolderName(summary)}`);
-            await syncDailySummary(
-              context,
-              options.outputDir,
-              summary.id,
-              dailySyncTask
-            );
-          }
+  if (options.targets.has("daily")) {
+    const task = progress.addTask("daily");
+    syncPromises.push(syncDaily(context, options.outputDir, task));
+  }
 
-          if (recent.length > 0) {
-            for (const summary of recent) {
-              dailySyncTask.setLabel(`recent ${resolveDailyFolderName(summary)}`);
-              await syncDailySummary(
-                context,
-                options.outputDir,
-                summary.id,
-                dailySyncTask
-              );
-            }
-          }
-          dailySyncTask.setLabel("daily sync done");
-          dailySyncTask.complete();
-        })()
-      : Promise.resolve();
+  if (options.targets.has("conversations")) {
+    const task = progress.addTask("conversations");
+    syncPromises.push(syncConversations(context, options.outputDir, task));
+  }
 
-  const conversationsSyncPromise =
-    options.targets.has("conversations") && conversationTask
-      ? (async () => {
-          const sortedConversations = [...conversations].sort(
-            (a, b) => conversationSortKey(a) - conversationSortKey(b)
-          );
-          conversationTask.setTotal(sortedConversations.length);
-
-          const conversationsRoot = path.join(options.outputDir, "conversations");
-          await mkdir(conversationsRoot, { recursive: true });
-          await runWithConcurrency(
-            sortedConversations,
-            CONVERSATION_CONCURRENCY,
-            async (conversation) => {
-              const detail = await fetchConversation(context, conversation.id);
-              const dateFolder = resolveConversationFolderName(detail);
-              const conversationsDir = path.join(conversationsRoot, dateFolder);
-              await mkdir(conversationsDir, { recursive: true });
-              const markdown = formatConversationMarkdown(detail);
-              await writeFile(
-                path.join(conversationsDir, `${conversation.id}.md`),
-                markdown,
-                "utf8"
-              );
-              conversationTask.advance(1);
-            }
-          );
-          conversationTask.setLabel("all conversations done");
-          conversationTask.complete();
-        })()
-      : Promise.resolve();
-
-  await Promise.all([dailySyncPromise, conversationsSyncPromise]);
+  await Promise.all(syncPromises);
   progress.finish();
+}
+
+async function syncFacts(
+  context: CommandContext,
+  outputDir: string,
+  task: ProgressTask
+): Promise<void> {
+  const facts = await fetchAllFacts(context, task);
+  await writeFactsMarkdown(outputDir, facts);
+  task.setLabel("facts done");
+  task.complete();
+}
+
+async function syncTodos(
+  context: CommandContext,
+  outputDir: string,
+  task: ProgressTask
+): Promise<void> {
+  const todos = await fetchAllTodos(context, task);
+  await writeTodosMarkdown(outputDir, todos);
+  task.setLabel("todos done");
+  task.complete();
+}
+
+async function syncDaily(
+  context: CommandContext,
+  outputDir: string,
+  task: ProgressTask
+): Promise<void> {
+  const dailySummaries = await fetchAllDailySummaries(context, task);
+  const dailyDir = path.join(outputDir, "daily");
+  await mkdir(dailyDir, { recursive: true });
+
+  const sortedDaily = [...dailySummaries].sort(
+    (a, b) => dailySortKey(a) - dailySortKey(b)
+  );
+  task.setTotal(sortedDaily.length);
+
+  await runWithConcurrency(sortedDaily, SYNC_CONCURRENCY, async (summary) => {
+    const detail = await fetchDailySummary(context, summary.id);
+    const folderName = resolveDailyFolderName(detail);
+    const dayDir = path.join(dailyDir, folderName);
+    await mkdir(dayDir, { recursive: true });
+    const markdown = formatDailySummaryMarkdown(detail);
+    await writeFile(path.join(dayDir, "summary.md"), markdown, "utf8");
+    task.advance(1);
+  });
+
+  task.setLabel("daily done");
+  task.complete();
+}
+
+async function syncConversations(
+  context: CommandContext,
+  outputDir: string,
+  task: ProgressTask
+): Promise<void> {
+  const conversations = await fetchAllConversations(context, task);
+  const conversationsDir = path.join(outputDir, "conversations");
+  await mkdir(conversationsDir, { recursive: true });
+
+  const sortedConversations = [...conversations].sort(
+    (a, b) => conversationSortKey(a) - conversationSortKey(b)
+  );
+  task.setTotal(sortedConversations.length);
+
+  await runWithConcurrency(
+    sortedConversations,
+    SYNC_CONCURRENCY,
+    async (conversation) => {
+      const detail = await fetchConversation(context, conversation.id);
+      const dateFolder = resolveConversationFolderName(detail);
+      const dayDir = path.join(conversationsDir, dateFolder);
+      await mkdir(dayDir, { recursive: true });
+      const markdown = formatConversationMarkdown(detail);
+      await writeFile(path.join(dayDir, `${conversation.id}.md`), markdown, "utf8");
+      task.advance(1);
+    }
+  );
+
+  task.setLabel("conversations done");
+  task.complete();
 }
 
 function dailySortKey(summary: DailySummary): number {
@@ -519,6 +483,10 @@ function dailySortKey(summary: DailySummary): number {
     return summary.created_at;
   }
   return summary.id;
+}
+
+function conversationSortKey(conversation: ConversationSummary): number {
+  return conversation.start_time ?? conversation.created_at ?? conversation.id;
 }
 
 async function fetchAllFacts(
@@ -535,8 +503,8 @@ async function fetchAllFacts(
     if (cursor) {
       params.set("cursor", cursor);
     }
-    const path = params.toString() ? `/v1/facts?${params}` : "/v1/facts";
-    const data = await requestClientJson(context, path, { method: "GET" });
+    const apiPath = params.toString() ? `/v1/facts?${params}` : "/v1/facts";
+    const data = await requestClientJson(context, apiPath, { method: "GET" });
     const payload = parseFactsList(data);
     items.push(...payload.facts);
     task.advance(payload.facts.length);
@@ -564,8 +532,8 @@ async function fetchAllTodos(
     if (cursor) {
       params.set("cursor", cursor);
     }
-    const path = params.toString() ? `/v1/todos?${params}` : "/v1/todos";
-    const data = await requestClientJson(context, path, { method: "GET" });
+    const apiPath = params.toString() ? `/v1/todos?${params}` : "/v1/todos";
+    const data = await requestClientJson(context, apiPath, { method: "GET" });
     const payload = parseTodosList(data);
     items.push(...payload.todos);
     task.advance(payload.todos.length);
@@ -593,8 +561,8 @@ async function fetchAllDailySummaries(
     if (cursor) {
       params.set("cursor", cursor);
     }
-    const path = params.toString() ? `/v1/daily?${params}` : "/v1/daily";
-    const data = await requestClientJson(context, path, { method: "GET" });
+    const apiPath = params.toString() ? `/v1/daily?${params}` : "/v1/daily";
+    const data = await requestClientJson(context, apiPath, { method: "GET" });
     const payload = parseDailyList(data);
     items.push(...payload.daily_summaries);
     task.advance(payload.daily_summaries.length);
@@ -622,10 +590,10 @@ async function fetchAllConversations(
     if (cursor) {
       params.set("cursor", cursor);
     }
-    const path = params.toString()
+    const apiPath = params.toString()
       ? `/v1/conversations?${params}`
       : "/v1/conversations";
-    const data = await requestClientJson(context, path, { method: "GET" });
+    const data = await requestClientJson(context, apiPath, { method: "GET" });
     const payload = parseConversationList(data);
     items.push(...payload.conversations);
     task.advance(payload.conversations.length);
@@ -639,40 +607,24 @@ async function fetchAllConversations(
   return items;
 }
 
-function conversationSortKey(conversation: ConversationSummary): number {
-  return conversation.start_time ?? conversation.created_at ?? conversation.id;
-}
-
-async function syncDailySummary(
+async function fetchDailySummary(
   context: CommandContext,
-  outputDir: string,
-  dailyId: number,
-  dailyTask: ProgressTask
-): Promise<void> {
+  dailyId: number
+): Promise<DailySummaryDetail> {
   const data = await requestClientJson(context, `/v1/daily/${dailyId}`, {
     method: "GET",
   });
   const payload = parseDailyDetail(data);
-  const daily = payload.daily_summary;
-
-  const folderName = resolveDailyFolderName(daily);
-  const dailyDir = path.join(outputDir, "daily", folderName);
-  await mkdir(dailyDir, { recursive: true });
-
-  const summaryMarkdown = formatDailySummaryMarkdown(daily);
-  await writeFile(path.join(dailyDir, "summary.md"), summaryMarkdown, "utf8");
-  dailyTask.advance(1);
+  return payload.daily_summary;
 }
 
 async function fetchConversation(
   context: CommandContext,
   id: number
 ): Promise<ConversationDetail> {
-  const data = await requestClientJson(
-    context,
-    `/v1/conversations/${id}`,
-    { method: "GET" }
-  );
+  const data = await requestClientJson(context, `/v1/conversations/${id}`, {
+    method: "GET",
+  });
   const payload = parseConversationDetail(data);
   return payload.conversation;
 }
@@ -687,15 +639,6 @@ function resolveConversationFolderName(conversation: ConversationDetail): string
   const timestamp = conversation.start_time ?? conversation.created_at ?? 0;
   const timeZone = resolveTimezone(conversation.timezone);
   return formatDateInTimeZone(timestamp, timeZone);
-}
-
-function resolveConversationLink(
-  summary: DailySummaryDetail,
-  conversation: { id: number; start_time: number }
-): string {
-  const timeZone = resolveTimezone(summary.timezone);
-  const dateFolder = formatDateInTimeZone(conversation.start_time, timeZone);
-  return `../../conversations/${dateFolder}/${conversation.id}.md`;
 }
 
 async function writeFactsMarkdown(
@@ -811,10 +754,7 @@ function formatDailySummaryMarkdown(summary: DailySummaryDetail): string {
           ? formatDateTime(conversation.end_time)
           : "n/a";
       const short = conversation.short_summary ?? "(no summary)";
-      const link = resolveConversationLink(summary, conversation);
-      lines.push(
-        `- ${conversation.id} (${start} - ${end}) — ${short} (${link})`
-      );
+      lines.push(`- ${conversation.id} (${start} - ${end}) — ${short}`);
     }
   } else {
     lines.push("- (none)");
@@ -833,12 +773,8 @@ function formatConversationMarkdown(conversation: ConversationDetail): string {
   );
   lines.push(`- device_type: ${conversation.device_type}`);
   lines.push(`- state: ${conversation.state}`);
-  lines.push(
-    `- created_at: ${formatDateTime(conversation.created_at)}`
-  );
-  lines.push(
-    `- updated_at: ${formatDateTime(conversation.updated_at)}`
-  );
+  lines.push(`- created_at: ${formatDateTime(conversation.created_at)}`);
+  lines.push(`- updated_at: ${formatDateTime(conversation.updated_at)}`);
   lines.push("");
 
   if (conversation.short_summary) {
@@ -858,9 +794,7 @@ function formatConversationMarkdown(conversation: ConversationDetail): string {
     lines.push(
       `- ${address} (${location.latitude.toFixed(5)}, ${location.longitude.toFixed(5)})`
     );
-    lines.push(
-      `- created_at: ${formatDateTime(location.created_at)}`
-    );
+    lines.push(`- created_at: ${formatDateTime(location.created_at)}`);
   } else {
     lines.push("- (none)");
   }
@@ -888,13 +822,17 @@ function formatConversationMarkdown(conversation: ConversationDetail): string {
       if (transcription.utterances.length === 0) {
         lines.push("- (no utterances)", "");
       } else {
-        for (const utterance of transcription.utterances) {
-          const start =
-            utterance.start !== null ? formatDateTime(utterance.start) : "n/a";
-          const end =
-            utterance.end !== null ? formatDateTime(utterance.end) : "n/a";
+        const sortedUtterances = [...transcription.utterances].sort((a, b) => {
+          const timeA = a.spoken_at ?? a.start ?? 0;
+          const timeB = b.spoken_at ?? b.start ?? 0;
+          if (timeA !== timeB) {
+            return timeA - timeB;
+          }
+          return a.id - b.id;
+        });
+        for (const utterance of sortedUtterances) {
           lines.push(
-            `- ${utterance.speaker || "unknown"}: ${utterance.text} (${start} - ${end})`
+            `- ${utterance.speaker || "unknown"}: ${utterance.text}`
           );
         }
         lines.push("");
