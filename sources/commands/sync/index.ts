@@ -8,6 +8,7 @@ const USAGE =
 
 const DEFAULT_OUTPUT_DIR = "bee-sync";
 const DEFAULT_RECENT_DAYS = 3;
+const PAGE_SIZE = 100;
 
 type Fact = {
   id: number;
@@ -274,6 +275,7 @@ async function fetchAllFacts(
 
   while (true) {
     const params = new URLSearchParams();
+    params.set("limit", String(PAGE_SIZE));
     if (cursor) {
       params.set("cursor", cursor);
     }
@@ -302,6 +304,7 @@ async function fetchAllTodos(
 
   while (true) {
     const params = new URLSearchParams();
+    params.set("limit", String(PAGE_SIZE));
     if (cursor) {
       params.set("cursor", cursor);
     }
