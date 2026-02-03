@@ -402,7 +402,7 @@ async function syncAll(
     ? progress.addTask("daily sync")
     : null;
   const dailyConversationTask = options.targets.has("daily")
-    ? progress.addTask("conversations")
+    ? progress.addTask("daily conversations")
     : null;
   const conversationListTask = options.targets.has("conversations")
     ? progress.addTask("conversation list")
@@ -412,12 +412,15 @@ async function syncAll(
     : null;
   await mkdir(options.outputDir, { recursive: true });
 
-  const [facts, todos, dailySummaries] = await Promise.all([
+  const [facts, todos, dailySummaries, conversations] = await Promise.all([
     factsTask ? fetchAllFacts(context, factsTask) : Promise.resolve<Fact[]>([]),
     todosTask ? fetchAllTodos(context, todosTask) : Promise.resolve<Todo[]>([]),
     dailyListTask
       ? fetchAllDailySummaries(context, dailyListTask)
       : Promise.resolve<DailySummary[]>([]),
+    conversationListTask
+      ? fetchAllConversations(context, conversationListTask)
+      : Promise.resolve<ConversationSummary[]>([]),
   ]);
   if (factsTask) {
     factsTask.setLabel("facts done");
@@ -433,82 +436,86 @@ async function syncAll(
     dailyListTask.setLabel("daily list done");
     dailyListTask.complete();
   }
-
-  if (options.targets.has("daily") && dailySyncTask && dailyConversationTask) {
-    const sortedDaily = [...dailySummaries].sort((a, b) => {
-      return dailySortKey(a) - dailySortKey(b);
-    });
-
-    const recent = [...sortedDaily]
-      .sort((a, b) => dailySortKey(b) - dailySortKey(a))
-      .slice(0, options.recentDays);
-    dailySyncTask.setTotal(sortedDaily.length + recent.length);
-    dailyConversationTask.reset();
-    for (const summary of sortedDaily) {
-      dailySyncTask.setLabel(`daily ${resolveDailyFolderName(summary)}`);
-      await syncDailySummary(
-        context,
-        options.outputDir,
-        summary.id,
-        dailySyncTask,
-        dailyConversationTask
-      );
-    }
-
-    if (recent.length > 0) {
-      for (const summary of recent) {
-        dailySyncTask.setLabel(`recent ${resolveDailyFolderName(summary)}`);
-        await syncDailySummary(
-          context,
-          options.outputDir,
-          summary.id,
-          dailySyncTask,
-          dailyConversationTask
-        );
-      }
-    }
-    dailySyncTask.setLabel("daily sync done");
-    dailySyncTask.complete();
-    dailyConversationTask.setLabel("conversations done");
-    dailyConversationTask.complete();
+  if (conversationListTask) {
+    conversationListTask.setLabel("conversation list done");
+    conversationListTask.complete();
   }
 
-  if (options.targets.has("conversations") && conversationTask) {
-    const conversations = conversationListTask
-      ? await fetchAllConversations(context, conversationListTask)
-      : [];
-    if (conversationListTask) {
-      conversationListTask.setLabel("conversation list done");
-      conversationListTask.complete();
-    }
+  const dailySyncPromise =
+    options.targets.has("daily") && dailySyncTask && dailyConversationTask
+      ? (async () => {
+          const sortedDaily = [...dailySummaries].sort((a, b) => {
+            return dailySortKey(a) - dailySortKey(b);
+          });
 
-    const sortedConversations = [...conversations].sort(
-      (a, b) => conversationSortKey(a) - conversationSortKey(b)
-    );
-    conversationTask.setTotal(sortedConversations.length);
+          const recent = [...sortedDaily]
+            .sort((a, b) => dailySortKey(b) - dailySortKey(a))
+            .slice(0, options.recentDays);
+          dailySyncTask.setTotal(sortedDaily.length + recent.length);
+          dailyConversationTask.reset();
+          for (const summary of sortedDaily) {
+            dailySyncTask.setLabel(`daily ${resolveDailyFolderName(summary)}`);
+            await syncDailySummary(
+              context,
+              options.outputDir,
+              summary.id,
+              dailySyncTask,
+              dailyConversationTask
+            );
+          }
 
-    const conversationsRoot = path.join(options.outputDir, "conversations");
-    await mkdir(conversationsRoot, { recursive: true });
-    await runWithConcurrency(
-      sortedConversations,
-      CONVERSATION_CONCURRENCY,
-      async (conversation) => {
-        const detail = await fetchConversation(context, conversation.id);
-        const dateFolder = resolveConversationFolderName(detail);
-        const conversationsDir = path.join(conversationsRoot, dateFolder);
-        await mkdir(conversationsDir, { recursive: true });
-        const markdown = formatConversationMarkdown(detail);
-        await writeFile(
-          path.join(conversationsDir, `${conversation.id}.md`),
-          markdown,
-          "utf8"
-        );
-        conversationTask.advance(1);
-      }
-    );
-    conversationTask.setLabel("all conversations done");
-    conversationTask.complete();
-  }
+          if (recent.length > 0) {
+            for (const summary of recent) {
+              dailySyncTask.setLabel(`recent ${resolveDailyFolderName(summary)}`);
+              await syncDailySummary(
+                context,
+                options.outputDir,
+                summary.id,
+                dailySyncTask,
+                dailyConversationTask
+              );
+            }
+          }
+          dailySyncTask.setLabel("daily sync done");
+          dailySyncTask.complete();
+          dailyConversationTask.setLabel("daily conversations done");
+          dailyConversationTask.complete();
+        })()
+      : Promise.resolve();
+
+  const conversationsSyncPromise =
+    options.targets.has("conversations") && conversationTask
+      ? (async () => {
+          const sortedConversations = [...conversations].sort(
+            (a, b) => conversationSortKey(a) - conversationSortKey(b)
+          );
+          conversationTask.setTotal(sortedConversations.length);
+
+          const conversationsRoot = path.join(options.outputDir, "conversations");
+          await mkdir(conversationsRoot, { recursive: true });
+          await runWithConcurrency(
+            sortedConversations,
+            CONVERSATION_CONCURRENCY,
+            async (conversation) => {
+              const detail = await fetchConversation(context, conversation.id);
+              const dateFolder = resolveConversationFolderName(detail);
+              const conversationsDir = path.join(conversationsRoot, dateFolder);
+              await mkdir(conversationsDir, { recursive: true });
+              const markdown = formatConversationMarkdown(detail);
+              await writeFile(
+                path.join(conversationsDir, `${conversation.id}.md`),
+                markdown,
+                "utf8"
+              );
+              conversationTask.advance(1);
+            }
+          );
+          conversationTask.setLabel("all conversations done");
+          conversationTask.complete();
+        })()
+      : Promise.resolve();
+
+  await Promise.all([dailySyncPromise, conversationsSyncPromise]);
   progress.finish();
 }
 
