@@ -359,53 +359,43 @@ function formatConversationDetailDocument(
   }
   lines.push("");
 
-  lines.push("## Transcriptions", "");
-  if (conversation.transcriptions.length === 0) {
+  lines.push("## Utterances", "");
+  const transcription = pickTranscription(conversation.transcriptions);
+  if (!transcription || transcription.utterances.length === 0) {
     lines.push("- (none)");
   } else {
-    for (const transcription of conversation.transcriptions) {
-      lines.push(`### Transcription ${transcription.id}`, "");
-      lines.push(formatTimeZoneHeader(timeZone));
-      lines.push(`- realtime: ${transcription.realtime ? "true" : "false"}`);
-      lines.push("");
-
-      if (transcription.utterances.length === 0) {
-        lines.push("- (no utterances)", "");
-      } else {
-        const sortedUtterances = [...transcription.utterances].sort((a, b) => {
-          const timeA = a.spoken_at ?? a.start ?? 0;
-          const timeB = b.spoken_at ?? b.start ?? 0;
-          if (timeA !== timeB) {
-            return timeA - timeB;
-          }
-          return a.id - b.id;
-        });
-        for (const utterance of sortedUtterances) {
-          const speaker = utterance.speaker || "unknown";
-          const text = utterance.text.trim() || "(empty)";
-          const timeParts: string[] = [];
-          if (utterance.spoken_at !== null) {
-            timeParts.push(
-              `spoken_at: ${formatDateValue(utterance.spoken_at, timeZone, nowMs)}`
-            );
-          }
-          if (utterance.start !== null) {
-            timeParts.push(
-              `start: ${formatDateValue(utterance.start, timeZone, nowMs)}`
-            );
-          }
-          if (utterance.end !== null) {
-            timeParts.push(
-              `end: ${formatDateValue(utterance.end, timeZone, nowMs)}`
-            );
-          }
-          const timeSuffix =
-            timeParts.length > 0 ? ` (${timeParts.join(", ")})` : "";
-          lines.push(`- ${speaker}: ${text}${timeSuffix}`);
-        }
-        lines.push("");
+    const sortedUtterances = [...transcription.utterances].sort((a, b) => {
+      const timeA = a.spoken_at ?? a.start ?? 0;
+      const timeB = b.spoken_at ?? b.start ?? 0;
+      if (timeA !== timeB) {
+        return timeA - timeB;
       }
+      return a.id - b.id;
+    });
+    for (const utterance of sortedUtterances) {
+      const speaker = utterance.speaker || "unknown";
+      const text = utterance.text.trim() || "(empty)";
+      const timeParts: string[] = [];
+      if (utterance.spoken_at !== null) {
+        timeParts.push(
+          `spoken_at: ${formatDateValue(utterance.spoken_at, timeZone, nowMs)}`
+        );
+      }
+      if (utterance.start !== null) {
+        timeParts.push(
+          `start: ${formatDateValue(utterance.start, timeZone, nowMs)}`
+        );
+      }
+      if (utterance.end !== null) {
+        timeParts.push(
+          `end: ${formatDateValue(utterance.end, timeZone, nowMs)}`
+        );
+      }
+      const timeSuffix =
+        timeParts.length > 0 ? ` (${timeParts.join(", ")})` : "";
+      lines.push(`- ${speaker}: ${text}${timeSuffix}`);
     }
+    lines.push("");
   }
 
   lines.push("");
@@ -417,6 +407,16 @@ function normalizeRecord(payload: unknown): Record<string, unknown> {
     return payload as Record<string, unknown>;
   }
   return { value: payload };
+}
+
+function pickTranscription(
+  transcriptions: ConversationDetail["transcriptions"]
+): ConversationDetail["transcriptions"][number] | null {
+  if (transcriptions.length === 0) {
+    return null;
+  }
+  const nonRealtime = transcriptions.find((item) => !item.realtime);
+  return nonRealtime ?? transcriptions[0] ?? null;
 }
 
 function resolveConversationStartTime(
