@@ -34,7 +34,13 @@ The Bee CLI exports your personal data as markdown files, making it available to
 
 ## Installation
 
-Download the latest release from the releases page or build from source.
+Install from npm:
+
+```bash
+npm install -g @beeai/cli
+```
+
+Or download the latest release from the releases page or build from source.
 
 ## Usage
 

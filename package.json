@@ -1,14 +1,15 @@
 {
-  "name": "bee-cli",
+  "name": "@beeai/cli",
   "version": "0.1.0",
   "description": "CLI client for bee.computer",
   "license": "MIT",
   "type": "module",
   "bin": {
-    "bee": "dist/bee"
+    "bee": "bin/bee.js"
   },
   "files": [
-    "dist/bee",
+    "bin/bee.js",
+    "dist/platforms",
     "README.md",
     "LICENSE"
   ],
@@ -16,6 +17,7 @@
     "build": "bun build ./sources/main.ts --compile --outfile ./dist/bee",
     "build:all": "bash ./scripts/build-all.sh",
     "dev": "bun ./sources/main.ts",
+    "postinstall": "node ./scripts/postinstall.js",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
