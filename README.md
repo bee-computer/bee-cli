@@ -53,6 +53,8 @@ By default, data commands return markdown. Use `--json` to print raw JSON.
 
 - `today` - Fetch today's brief (calendar events and emails). Use `--json` for JSON output.
 
+- `now` - Fetch conversations from the last 10 hours with utterances. Use `--json` for JSON output.
+
 - `changed` - Fetch recent changes (defaults to last 24 hours). Use `--cursor <cursor>` and `--json` for JSON output.
 
 - `facts` - Manage your facts (things Bee remembers about you).

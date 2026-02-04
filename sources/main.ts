@@ -8,6 +8,7 @@ import { journalsCommand } from "@/commands/journals";
 import { loginCommand } from "@/commands/login";
 import { logoutCommand } from "@/commands/logout";
 import { meCommand } from "@/commands/me";
+import { nowCommand } from "@/commands/now";
 import { pingCommand } from "@/commands/ping";
 import { proxyCommand } from "@/commands/proxy";
 import { searchCommand } from "@/commands/search";
@@ -26,6 +27,7 @@ const commands = [
   logoutCommand,
   statusCommand,
   todayCommand,
+  nowCommand,
   changedCommand,
   conversationsCommand,
   dailyCommand,
