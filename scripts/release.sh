@@ -17,7 +17,7 @@ bun install
 bun run typecheck
 bun run build
 
-npm version "$VERSION" -m "chore(release): %s"
+bun version "$VERSION" -m "chore(release): %s"
 
 bun publish --access public
 git push --follow-tags
