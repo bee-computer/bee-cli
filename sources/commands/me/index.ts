@@ -27,10 +27,11 @@ export const meCommand: Command = {
     }
     const nowMs = Date.now();
     const timeZone = resolveTimeZone(parseUserTimezone(data));
+    const profile = parseProfile(data);
     console.log(
       formatRecordMarkdown({
         title: "Profile",
-        record: normalizeRecord(data),
+        record: profile,
         timeZone,
         nowMs,
       })
@@ -46,9 +47,20 @@ function parseUserTimezone(value: unknown): string | null {
   return typeof record.timezone === "string" ? record.timezone : null;
 }
 
-function normalizeRecord(payload: unknown): Record<string, unknown> {
-  if (payload && typeof payload === "object") {
-    return payload as Record<string, unknown>;
+function parseProfile(payload: unknown): Record<string, unknown> {
+  if (!payload || typeof payload !== "object") {
+    return { first_name: "n/a", last_name: "n/a" };
   }
-  return { value: payload };
+  const record = payload as {
+    first_name?: unknown;
+    last_name?: unknown;
+    timezone?: unknown;
+  };
+  return {
+    first_name:
+      typeof record.first_name === "string" ? record.first_name : "n/a",
+    last_name:
+      typeof record.last_name === "string" ? record.last_name : "n/a",
+    timezone: typeof record.timezone === "string" ? record.timezone : "n/a",
+  }
 }
