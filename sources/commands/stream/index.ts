@@ -24,15 +24,18 @@ const SUPPORTED_EVENT_TYPES = [
 
 type StreamOptions = {
     types?: string[];
-    json: boolean;
+    format: StreamOutputFormat;
     webhookEndpoint?: string;
     webhookBody?: string;
 };
+
+type StreamOutputFormat = "pretty" | "json" | "message";
 
 const USAGE = [
     "bee stream",
     "bee stream --types new-utterance,update-conversation",
     "bee stream --json",
+    "bee stream --format message",
     "bee stream --types all",
     "bee stream --webhook-endpoint https://example.com/hooks/agent --webhook-body '{\"message\":\"{{message}}\"}'",
 ].join("\n");
@@ -50,7 +53,8 @@ export const streamCommand: Command = {
 };
 
 function parseArgs(args: readonly string[]): StreamOptions {
-    const options: StreamOptions = { json: false };
+    const options: StreamOptions = { format: "pretty" };
+    let formatExplicit = false;
     const positionals: string[] = [];
 
     for (let i = 0; i < args.length; i += 1) {
@@ -70,7 +74,28 @@ function parseArgs(args: readonly string[]): StreamOptions {
         }
 
         if (arg === "--json") {
-            options.json = true;
+            if (formatExplicit && options.format !== "json") {
+                throw new Error("--json cannot be combined with --format");
+            }
+            options.format = "json";
+            formatExplicit = true;
+            continue;
+        }
+
+        if (arg === "--format") {
+            const value = args[i + 1];
+            if (value === undefined) {
+                throw new Error("--format requires a value");
+            }
+            if (value !== "pretty" && value !== "json" && value !== "message") {
+                throw new Error(`Unknown format: ${value}`);
+            }
+            if (formatExplicit && options.format !== value) {
+                throw new Error("--format cannot be combined with other output flags");
+            }
+            options.format = value;
+            formatExplicit = true;
+            i += 1;
             continue;
         }
 
@@ -126,7 +151,7 @@ async function handleStream(
     }
 
     const params = new URLSearchParams();
-    if (options.types && options.types.length > 0) {
+    if (options.types && options.types.length > 0 && !options.types.includes("all")) {
         params.set("types", options.types.join(","));
     }
 
@@ -134,7 +159,7 @@ async function handleStream(
     const path = suffix ? `/v1/stream?${suffix}` : "/v1/stream";
     const webhook = buildWebhook(options);
 
-    if (!options.json) {
+    if (options.format === "pretty") {
         console.log("Connecting to event stream...");
         console.log(`Supported event types: ${SUPPORTED_EVENT_TYPES.join(", ")}`);
         if (options.types) {
@@ -146,7 +171,7 @@ async function handleStream(
     const abortController = new AbortController();
 
     process.on("SIGINT", () => {
-        if (!options.json) {
+        if (options.format === "pretty") {
             console.log("\nDisconnecting...");
         }
         abortController.abort();
@@ -193,7 +218,7 @@ async function processSSEStream(
         while (true) {
             const { done, value } = await reader.read();
             if (done) {
-                if (!options.json) {
+                if (options.format === "pretty") {
                     console.log("Stream ended.");
                 }
                 break;
@@ -275,6 +300,7 @@ function parseSSEBuffer(buffer: string): ParsedEvents {
 
 type WebhookPayload = {
     message: string;
+    agentMessage: string;
     event: string;
     timestamp: string;
     data?: Record<string, unknown>;
@@ -303,18 +329,22 @@ async function handleEvent(
     const timestamp = new Date().toISOString();
 
     if (event.event === "connected") {
-        if (options.json) {
+        if (options.format === "json") {
             console.log(event.data);
+        } else if (options.format === "message") {
+            console.log("Event connected: stream connected.");
         } else {
             console.log(`${dim(timestamp)} ${green("CONNECTED")}`);
         }
 
-    if (webhook && shouldSendWebhook(event.event, options)) {
-        await sendWebhook(webhook, {
-            message: "CONNECTED",
-            event: event.event,
-            timestamp,
-            raw: event.data,
+        if (webhook && shouldSendWebhook(event.event, options)) {
+            const agentMessage = "Event connected: stream connected.";
+            await sendWebhook(webhook, {
+                message: "CONNECTED",
+                agentMessage,
+                event: event.event,
+                timestamp,
+                raw: event.data,
             });
         }
         return;
@@ -332,9 +362,13 @@ async function handleEvent(
         // Keep raw payload
     }
 
-    if (options.json) {
+    const agentMessage = buildAgentMessage(event.event, formattedPlain);
+
+    if (options.format === "json") {
         // Raw JSON output for piping
         console.log(event.data);
+    } else if (options.format === "message") {
+        console.log(agentMessage);
     } else {
         // Formatted output
         console.log(`${dim(timestamp)} ${colored(event.event)} ${formattedColored}`);
@@ -343,6 +377,7 @@ async function handleEvent(
     if (webhook && shouldSendWebhook(event.event, options)) {
         const payload: WebhookPayload = {
             message: formattedPlain,
+            agentMessage,
             event: event.event,
             timestamp,
             raw: event.data,
@@ -524,6 +559,14 @@ function formatEvent(
         default:
             return JSON.stringify(data);
     }
+}
+
+function buildAgentMessage(eventType: string, content: string): string {
+    const normalized = content.replace(/\s+/g, " ").trim();
+    if (!normalized) {
+        return `Event ${eventType}.`;
+    }
+    return `Event ${eventType}: ${normalized}`;
 }
 
 function truncate(text: string, maxLength: number): string {
