@@ -226,7 +226,7 @@ function formatConversationNow(
     );
   }
   lines.push(`- state: ${conversation.state}`);
-  lines.push(`- command: \`bee conversations get ${conversation.id}\``);
+  lines.push(`> To read the full conversation, run: \`bee conversations get ${conversation.id}\``);
   lines.push("");
 
   const summaryText = resolveSummaryText(conversation);
