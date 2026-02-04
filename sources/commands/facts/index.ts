@@ -1,12 +1,19 @@
 import type { Command, CommandContext } from "@/commands/types";
 import { printJson, requestClientJson } from "@/client/clientApi";
+import {
+  formatDateValue,
+  formatRecordMarkdown,
+  formatTimeZoneHeader,
+  parseOutputFlag,
+  resolveTimeZone,
+} from "@/utils/markdown";
 
 const USAGE = [
-  "bee facts list [--limit N] [--cursor <cursor>] [--confirmed <true|false>]",
-  "bee facts get <id>",
-  "bee facts create --text <text>",
-  "bee facts update <id> --text <text> [--confirmed <true|false>]",
-  "bee facts delete <id>",
+  "bee facts list [--limit N] [--cursor <cursor>] [--confirmed <true|false>] [--json]",
+  "bee facts get <id> [--json]",
+  "bee facts create --text <text> [--json]",
+  "bee facts update <id> --text <text> [--confirmed <true|false>] [--json]",
+  "bee facts delete <id> [--json]",
 ].join("\n");
 
 export const factsCommand: Command = {
@@ -51,7 +58,8 @@ async function handleList(
   args: readonly string[],
   context: CommandContext
 ): Promise<void> {
-  const options = parseListArgs(args);
+  const { format, args: remaining } = parseOutputFlag(args);
+  const options = parseListArgs(remaining);
   const params = new URLSearchParams();
 
   if (options.limit !== undefined) {
@@ -67,7 +75,28 @@ async function handleList(
   const suffix = params.toString();
   const path = suffix ? `/v1/facts?${suffix}` : "/v1/facts";
   const data = await requestClientJson(context, path, { method: "GET" });
-  printJson(data);
+  if (format === "json") {
+    printJson(data);
+    return;
+  }
+  const payload = parseFactsList(data);
+  const nowMs = Date.now();
+  const timeZone = resolveTimeZone();
+  const confirmed = payload.facts.filter((fact) => fact.confirmed);
+  const pending = payload.facts.filter((fact) => !fact.confirmed);
+
+  const lines: string[] = ["# Facts", ""];
+  lines.push("## Confirmed", "");
+  lines.push(...formatFactsSection(confirmed, nowMs, timeZone, "###"));
+  lines.push("## Pending", "");
+  lines.push(...formatFactsSection(pending, nowMs, timeZone, "###"));
+
+  if (payload.next_cursor) {
+    lines.push("## Pagination", "");
+    lines.push(`- next_cursor: ${payload.next_cursor}`, "");
+  }
+
+  console.log(lines.join("\n"));
 }
 
 function parseListArgs(args: readonly string[]): ListOptions {
@@ -136,11 +165,30 @@ async function handleGet(
   args: readonly string[],
   context: CommandContext
 ): Promise<void> {
-  const id = parseId(args);
+  const { format, args: remaining } = parseOutputFlag(args);
+  const id = parseId(remaining);
   const data = await requestClientJson(context, `/v1/facts/${id}`, {
     method: "GET",
   });
-  printJson(data);
+  if (format === "json") {
+    printJson(data);
+    return;
+  }
+  const nowMs = Date.now();
+  const timeZone = resolveTimeZone();
+  const fact = parseFactPayload(data);
+  if (fact) {
+    console.log(formatFactDocument(fact, nowMs, timeZone));
+    return;
+  }
+  console.log(
+    formatRecordMarkdown({
+      title: "Fact",
+      record: normalizeRecord(data),
+      timeZone,
+      nowMs,
+    })
+  );
 }
 
 function parseId(args: readonly string[]): number {
@@ -166,12 +214,31 @@ async function handleCreate(
   args: readonly string[],
   context: CommandContext
 ): Promise<void> {
-  const options = parseCreateArgs(args);
+  const { format, args: remaining } = parseOutputFlag(args);
+  const options = parseCreateArgs(remaining);
   const data = await requestClientJson(context, "/v1/facts", {
     method: "POST",
     json: { text: options.text },
   });
-  printJson(data);
+  if (format === "json") {
+    printJson(data);
+    return;
+  }
+  const nowMs = Date.now();
+  const timeZone = resolveTimeZone();
+  const fact = parseFactPayload(data);
+  if (fact) {
+    console.log(formatFactDocument(fact, nowMs, timeZone));
+    return;
+  }
+  console.log(
+    formatRecordMarkdown({
+      title: "Fact",
+      record: normalizeRecord(data),
+      timeZone,
+      nowMs,
+    })
+  );
 }
 
 function parseCreateArgs(args: readonly string[]): CreateOptions {
@@ -222,7 +289,8 @@ async function handleUpdate(
   args: readonly string[],
   context: CommandContext
 ): Promise<void> {
-  const options = parseUpdateArgs(args);
+  const { format, args: remaining } = parseOutputFlag(args);
+  const options = parseUpdateArgs(remaining);
   const body: { text: string; confirmed?: boolean } = { text: options.text };
   if (options.confirmed !== undefined) {
     body.confirmed = options.confirmed;
@@ -232,7 +300,25 @@ async function handleUpdate(
     method: "PUT",
     json: body,
   });
-  printJson(data);
+  if (format === "json") {
+    printJson(data);
+    return;
+  }
+  const nowMs = Date.now();
+  const timeZone = resolveTimeZone();
+  const fact = parseFactPayload(data);
+  if (fact) {
+    console.log(formatFactDocument(fact, nowMs, timeZone));
+    return;
+  }
+  console.log(
+    formatRecordMarkdown({
+      title: "Fact",
+      record: normalizeRecord(data),
+      timeZone,
+      nowMs,
+    })
+  );
 }
 
 function parseUpdateArgs(args: readonly string[]): UpdateOptions {
@@ -310,9 +396,129 @@ async function handleDelete(
   args: readonly string[],
   context: CommandContext
 ): Promise<void> {
-  const id = parseId(args);
+  const { format, args: remaining } = parseOutputFlag(args);
+  const id = parseId(remaining);
   const data = await requestClientJson(context, `/v1/facts/${id}`, {
     method: "DELETE",
   });
-  printJson(data);
+  if (format === "json") {
+    printJson(data);
+    return;
+  }
+  const nowMs = Date.now();
+  const timeZone = resolveTimeZone();
+  const fact = parseFactPayload(data);
+  if (fact) {
+    console.log(formatFactDocument(fact, nowMs, timeZone));
+    return;
+  }
+  console.log(
+    formatRecordMarkdown({
+      title: "Fact",
+      record: normalizeRecord(data),
+      timeZone,
+      nowMs,
+    })
+  );
+}
+
+type Fact = {
+  id: number;
+  text: string;
+  tags: string[];
+  created_at: number;
+  confirmed: boolean;
+};
+
+function parseFactsList(
+  payload: unknown
+): { facts: Fact[]; next_cursor: string | null } {
+  if (!payload || typeof payload !== "object") {
+    throw new Error("Invalid facts response.");
+  }
+  const data = payload as {
+    facts?: Fact[];
+    next_cursor?: string | null;
+  };
+  if (!Array.isArray(data.facts)) {
+    throw new Error("Invalid facts response.");
+  }
+  return {
+    facts: data.facts,
+    next_cursor: data.next_cursor ?? null,
+  };
+}
+
+function parseFactPayload(payload: unknown): Fact | null {
+  if (!payload || typeof payload !== "object") {
+    return null;
+  }
+  if ("fact" in payload) {
+    const fact = (payload as { fact?: Fact }).fact;
+    if (fact) {
+      return fact;
+    }
+  }
+
+  const record = payload as Partial<Fact>;
+  if (
+    typeof record.id === "number" &&
+    typeof record.text === "string" &&
+    typeof record.created_at === "number" &&
+    typeof record.confirmed === "boolean" &&
+    Array.isArray(record.tags)
+  ) {
+    return record as Fact;
+  }
+
+  return null;
+}
+
+function formatFactsSection(
+  facts: Fact[],
+  nowMs: number,
+  timeZone: string,
+  headingPrefix: string
+): string[] {
+  if (facts.length === 0) {
+    return ["- (none)", ""];
+  }
+
+  const lines: string[] = [];
+  for (const fact of facts) {
+    lines.push(...formatFactBlock(fact, nowMs, timeZone, headingPrefix));
+  }
+  return lines;
+}
+
+function formatFactDocument(
+  fact: Fact,
+  nowMs: number,
+  timeZone: string
+): string {
+  return formatFactBlock(fact, nowMs, timeZone, "#").join("\n");
+}
+
+function formatFactBlock(
+  fact: Fact,
+  nowMs: number,
+  timeZone: string,
+  headingPrefix: string
+): string[] {
+  const lines: string[] = [];
+  lines.push(`${headingPrefix} Fact ${fact.id}`, "");
+  lines.push(formatTimeZoneHeader(timeZone));
+  lines.push(`- created_at: ${formatDateValue(fact.created_at, timeZone, nowMs)}`);
+  lines.push(`- confirmed: ${fact.confirmed ? "true" : "false"}`);
+  lines.push(`- tags: ${fact.tags.length > 0 ? fact.tags.join(", ") : "(none)"}`);
+  lines.push(`- text: ${fact.text.trim() || "(empty)"}`);
+  lines.push("");
+  return lines;
+}
+
+function normalizeRecord(payload: unknown): Record<string, unknown> {
+  if (payload && typeof payload === "object") {
+    return payload as Record<string, unknown>;
+  }
+  return { value: payload };
 }

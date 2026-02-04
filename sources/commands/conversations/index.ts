@@ -1,9 +1,16 @@
 import type { Command, CommandContext } from "@/commands/types";
 import { printJson, requestClientJson } from "@/client/clientApi";
+import {
+  formatDateValue,
+  formatRecordMarkdown,
+  formatTimeZoneHeader,
+  parseOutputFlag,
+  resolveTimeZone,
+} from "@/utils/markdown";
 
 const USAGE = [
-  "bee conversations list [--limit N] [--cursor <cursor>]",
-  "bee conversations get <id>",
+  "bee conversations list [--limit N] [--cursor <cursor>] [--json]",
+  "bee conversations get <id> [--json]",
 ].join("\n");
 
 export const conversationsCommand: Command = {
@@ -38,7 +45,8 @@ async function handleList(
   args: readonly string[],
   context: CommandContext
 ): Promise<void> {
-  const options = parseListArgs(args);
+  const { format, args: remaining } = parseOutputFlag(args);
+  const options = parseListArgs(remaining);
   const params = new URLSearchParams();
 
   if (options.limit !== undefined) {
@@ -51,7 +59,28 @@ async function handleList(
   const suffix = params.toString();
   const path = suffix ? `/v1/conversations?${suffix}` : "/v1/conversations";
   const data = await requestClientJson(context, path, { method: "GET" });
-  printJson(data);
+  if (format === "json") {
+    printJson(data);
+    return;
+  }
+  const payload = parseConversationList(data);
+  const nowMs = Date.now();
+  const lines: string[] = ["# Conversations", ""];
+
+  if (payload.conversations.length === 0) {
+    lines.push("- (none)", "");
+  } else {
+    for (const conversation of payload.conversations) {
+      lines.push(...formatConversationSummaryBlock(conversation, nowMs, "###"));
+    }
+  }
+
+  if (payload.next_cursor) {
+    lines.push("## Pagination", "");
+    lines.push(`- next_cursor: ${payload.next_cursor}`, "");
+  }
+
+  console.log(lines.join("\n"));
 }
 
 function parseListArgs(args: readonly string[]): ListOptions {
@@ -106,11 +135,30 @@ async function handleGet(
   args: readonly string[],
   context: CommandContext
 ): Promise<void> {
-  const id = parseId(args);
+  const { format, args: remaining } = parseOutputFlag(args);
+  const id = parseId(remaining);
   const data = await requestClientJson(context, `/v1/conversations/${id}`, {
     method: "GET",
   });
-  printJson(data);
+  if (format === "json") {
+    printJson(data);
+    return;
+  }
+  const nowMs = Date.now();
+  const detail = parseConversationDetail(data);
+  if (!detail) {
+    const timeZone = resolveTimeZone();
+    console.log(
+      formatRecordMarkdown({
+        title: "Conversation",
+        record: normalizeRecord(data),
+        timeZone,
+        nowMs,
+      })
+    );
+    return;
+  }
+  console.log(formatConversationDetailDocument(detail, nowMs));
 }
 
 function parseId(args: readonly string[]): number {
@@ -126,4 +174,224 @@ function parseId(args: readonly string[]): number {
     throw new Error("Conversation id must be a positive integer.");
   }
   return parsed;
+}
+
+type ConversationSummary = {
+  id: number;
+  start_time: number;
+  created_at: number;
+  timezone?: string | null;
+  short_summary?: string | null;
+};
+
+type ConversationDetail = {
+  id: number;
+  start_time: number;
+  end_time: number | null;
+  timezone?: string | null;
+  device_type: string;
+  summary: string | null;
+  short_summary: string | null;
+  state: string;
+  created_at: number;
+  updated_at: number;
+  transcriptions: Array<{
+    id: number;
+    realtime: boolean;
+    utterances: Array<{
+      id: number;
+      realtime: boolean;
+      start: number | null;
+      end: number | null;
+      spoken_at: number | null;
+      text: string;
+      speaker: string;
+      created_at: number;
+    }>;
+  }>;
+  suggested_links: Array<{
+    url: string;
+    created_at: number;
+  }>;
+  primary_location: {
+    address: string | null;
+    latitude: number;
+    longitude: number;
+    created_at: number;
+  } | null;
+};
+
+function parseConversationList(
+  payload: unknown
+): { conversations: ConversationSummary[]; next_cursor: string | null } {
+  if (!payload || typeof payload !== "object") {
+    throw new Error("Invalid conversation list response.");
+  }
+  const data = payload as {
+    conversations?: ConversationSummary[];
+    next_cursor?: string | null;
+  };
+  if (!Array.isArray(data.conversations)) {
+    throw new Error("Invalid conversation list response.");
+  }
+  return {
+    conversations: data.conversations,
+    next_cursor: data.next_cursor ?? null,
+  };
+}
+
+function parseConversationDetail(payload: unknown): ConversationDetail | null {
+  if (!payload || typeof payload !== "object") {
+    return null;
+  }
+  const data = payload as { conversation?: ConversationDetail };
+  if (!data.conversation) {
+    return null;
+  }
+  return data.conversation;
+}
+
+function formatConversationSummaryBlock(
+  conversation: ConversationSummary,
+  nowMs: number,
+  headingPrefix: string
+): string[] {
+  const timeZone = resolveTimeZone(conversation.timezone);
+  const lines: string[] = [];
+  lines.push(`${headingPrefix} Conversation ${conversation.id}`, "");
+  lines.push(formatTimeZoneHeader(timeZone));
+  lines.push(
+    `- start_time: ${formatDateValue(conversation.start_time, timeZone, nowMs)}`
+  );
+  lines.push(
+    `- created_at: ${formatDateValue(conversation.created_at, timeZone, nowMs)}`
+  );
+  if (conversation.short_summary) {
+    lines.push(
+      `- short_summary: ${conversation.short_summary.trim() || "(empty)"}`
+    );
+  }
+  lines.push("");
+  return lines;
+}
+
+function formatConversationDetailDocument(
+  conversation: ConversationDetail,
+  nowMs: number
+): string {
+  const timeZone = resolveTimeZone(conversation.timezone);
+  const lines: string[] = [`# Conversation ${conversation.id}`, ""];
+
+  lines.push(formatTimeZoneHeader(timeZone));
+  lines.push(
+    `- start_time: ${formatDateValue(conversation.start_time, timeZone, nowMs)}`
+  );
+  lines.push(
+    `- end_time: ${formatDateValue(conversation.end_time, timeZone, nowMs)}`
+  );
+  lines.push(`- device_type: ${conversation.device_type}`);
+  lines.push(`- state: ${conversation.state}`);
+  lines.push(
+    `- created_at: ${formatDateValue(conversation.created_at, timeZone, nowMs)}`
+  );
+  lines.push(
+    `- updated_at: ${formatDateValue(conversation.updated_at, timeZone, nowMs)}`
+  );
+  lines.push("");
+
+  if (conversation.short_summary) {
+    lines.push("## Short Summary", "");
+    lines.push(conversation.short_summary.trim() || "(empty)", "");
+  }
+
+  if (conversation.summary) {
+    lines.push("## Summary", "");
+    lines.push(conversation.summary.trim() || "(empty)", "");
+  }
+
+  lines.push("## Primary Location", "");
+  if (conversation.primary_location) {
+    const location = conversation.primary_location;
+    const address = location.address ?? "unknown";
+    lines.push(
+      `- ${address} (${location.latitude.toFixed(5)}, ${location.longitude.toFixed(5)})`
+    );
+    lines.push(
+      `- created_at: ${formatDateValue(location.created_at, timeZone, nowMs)}`
+    );
+  } else {
+    lines.push("- (none)");
+  }
+  lines.push("");
+
+  lines.push("## Suggested Links", "");
+  if (conversation.suggested_links.length > 0) {
+    for (const link of conversation.suggested_links) {
+      lines.push(
+        `- ${link.url} (${formatDateValue(link.created_at, timeZone, nowMs)})`
+      );
+    }
+  } else {
+    lines.push("- (none)");
+  }
+  lines.push("");
+
+  lines.push("## Transcriptions", "");
+  if (conversation.transcriptions.length === 0) {
+    lines.push("- (none)");
+  } else {
+    for (const transcription of conversation.transcriptions) {
+      lines.push(`### Transcription ${transcription.id}`, "");
+      lines.push(formatTimeZoneHeader(timeZone));
+      lines.push(`- realtime: ${transcription.realtime ? "true" : "false"}`);
+      lines.push("");
+
+      if (transcription.utterances.length === 0) {
+        lines.push("- (no utterances)", "");
+      } else {
+        const sortedUtterances = [...transcription.utterances].sort((a, b) => {
+          const timeA = a.spoken_at ?? a.start ?? 0;
+          const timeB = b.spoken_at ?? b.start ?? 0;
+          if (timeA !== timeB) {
+            return timeA - timeB;
+          }
+          return a.id - b.id;
+        });
+        for (const utterance of sortedUtterances) {
+          const speaker = utterance.speaker || "unknown";
+          const text = utterance.text.trim() || "(empty)";
+          const timeParts: string[] = [];
+          if (utterance.spoken_at !== null) {
+            timeParts.push(
+              `spoken_at: ${formatDateValue(utterance.spoken_at, timeZone, nowMs)}`
+            );
+          }
+          if (utterance.start !== null) {
+            timeParts.push(
+              `start: ${formatDateValue(utterance.start, timeZone, nowMs)}`
+            );
+          }
+          if (utterance.end !== null) {
+            timeParts.push(
+              `end: ${formatDateValue(utterance.end, timeZone, nowMs)}`
+            );
+          }
+          const timeSuffix =
+            timeParts.length > 0 ? ` (${timeParts.join(", ")})` : "";
+          lines.push(`- ${speaker}: ${text}${timeSuffix}`);
+        }
+        lines.push("");
+      }
+    }
+  }
+
+  lines.push("");
+  return lines.join("\n");
+}
+
+function normalizeRecord(payload: unknown): Record<string, unknown> {
+  if (payload && typeof payload === "object") {
+    return payload as Record<string, unknown>;
+  }
+  return { value: payload };
 }

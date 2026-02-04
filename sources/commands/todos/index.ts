@@ -1,12 +1,19 @@
 import type { Command, CommandContext } from "@/commands/types";
 import { printJson, requestClientJson } from "@/client/clientApi";
+import {
+  formatDateValue,
+  formatRecordMarkdown,
+  formatTimeZoneHeader,
+  parseOutputFlag,
+  resolveTimeZone,
+} from "@/utils/markdown";
 
 const USAGE = [
-  "bee todos list [--limit N] [--cursor <cursor>]",
-  "bee todos get <id>",
-  "bee todos create --text <text> [--alarm-at <iso>]",
-  "bee todos update <id> [--text <text>] [--completed <true|false>] [--alarm-at <iso> | --clear-alarm]",
-  "bee todos delete <id>",
+  "bee todos list [--limit N] [--cursor <cursor>] [--json]",
+  "bee todos get <id> [--json]",
+  "bee todos create --text <text> [--alarm-at <iso>] [--json]",
+  "bee todos update <id> [--text <text>] [--completed <true|false>] [--alarm-at <iso> | --clear-alarm] [--json]",
+  "bee todos delete <id> [--json]",
 ].join("\n");
 
 export const todosCommand: Command = {
@@ -50,7 +57,8 @@ async function handleList(
   args: readonly string[],
   context: CommandContext
 ): Promise<void> {
-  const options = parseListArgs(args);
+  const { format, args: remaining } = parseOutputFlag(args);
+  const options = parseListArgs(remaining);
   const params = new URLSearchParams();
 
   if (options.limit !== undefined) {
@@ -63,7 +71,28 @@ async function handleList(
   const suffix = params.toString();
   const path = suffix ? `/v1/todos?${suffix}` : "/v1/todos";
   const data = await requestClientJson(context, path, { method: "GET" });
-  printJson(data);
+  if (format === "json") {
+    printJson(data);
+    return;
+  }
+  const payload = parseTodosList(data);
+  const nowMs = Date.now();
+  const timeZone = resolveTimeZone();
+  const open = payload.todos.filter((todo) => !todo.completed);
+  const completed = payload.todos.filter((todo) => todo.completed);
+
+  const lines: string[] = ["# Todos", ""];
+  lines.push("## Open", "");
+  lines.push(...formatTodosSection(open, nowMs, timeZone, "###"));
+  lines.push("## Completed", "");
+  lines.push(...formatTodosSection(completed, nowMs, timeZone, "###"));
+
+  if (payload.next_cursor) {
+    lines.push("## Pagination", "");
+    lines.push(`- next_cursor: ${payload.next_cursor}`, "");
+  }
+
+  console.log(lines.join("\n"));
 }
 
 function parseListArgs(args: readonly string[]): ListOptions {
@@ -118,11 +147,30 @@ async function handleGet(
   args: readonly string[],
   context: CommandContext
 ): Promise<void> {
-  const id = parseId(args);
+  const { format, args: remaining } = parseOutputFlag(args);
+  const id = parseId(remaining);
   const data = await requestClientJson(context, `/v1/todos/${id}`, {
     method: "GET",
   });
-  printJson(data);
+  if (format === "json") {
+    printJson(data);
+    return;
+  }
+  const nowMs = Date.now();
+  const timeZone = resolveTimeZone();
+  const todo = parseTodoPayload(data);
+  if (todo) {
+    console.log(formatTodoDocument(todo, nowMs, timeZone));
+    return;
+  }
+  console.log(
+    formatRecordMarkdown({
+      title: "Todo",
+      record: normalizeRecord(data),
+      timeZone,
+      nowMs,
+    })
+  );
 }
 
 function parseId(args: readonly string[]): number {
@@ -145,7 +193,8 @@ async function handleCreate(
   args: readonly string[],
   context: CommandContext
 ): Promise<void> {
-  const options = parseCreateArgs(args);
+  const { format, args: remaining } = parseOutputFlag(args);
+  const options = parseCreateArgs(remaining);
   const body: { text: string; alarm_at?: string } = { text: options.text };
   if (options.alarmAt !== undefined) {
     body.alarm_at = options.alarmAt;
@@ -155,7 +204,25 @@ async function handleCreate(
     method: "POST",
     json: body,
   });
-  printJson(data);
+  if (format === "json") {
+    printJson(data);
+    return;
+  }
+  const nowMs = Date.now();
+  const timeZone = resolveTimeZone();
+  const todo = parseTodoPayload(data);
+  if (todo) {
+    console.log(formatTodoDocument(todo, nowMs, timeZone));
+    return;
+  }
+  console.log(
+    formatRecordMarkdown({
+      title: "Todo",
+      record: normalizeRecord(data),
+      timeZone,
+      nowMs,
+    })
+  );
 }
 
 function parseCreateArgs(args: readonly string[]): CreateOptions {
@@ -223,7 +290,8 @@ async function handleUpdate(
   args: readonly string[],
   context: CommandContext
 ): Promise<void> {
-  const options = parseUpdateArgs(args);
+  const { format, args: remaining } = parseOutputFlag(args);
+  const options = parseUpdateArgs(remaining);
   const body: {
     text?: string;
     completed?: boolean;
@@ -244,7 +312,25 @@ async function handleUpdate(
     method: "PUT",
     json: body,
   });
-  printJson(data);
+  if (format === "json") {
+    printJson(data);
+    return;
+  }
+  const nowMs = Date.now();
+  const timeZone = resolveTimeZone();
+  const todo = parseTodoPayload(data);
+  if (todo) {
+    console.log(formatTodoDocument(todo, nowMs, timeZone));
+    return;
+  }
+  console.log(
+    formatRecordMarkdown({
+      title: "Todo",
+      record: normalizeRecord(data),
+      timeZone,
+      nowMs,
+    })
+  );
 }
 
 function parseUpdateArgs(args: readonly string[]): UpdateOptions {
@@ -361,9 +447,130 @@ async function handleDelete(
   args: readonly string[],
   context: CommandContext
 ): Promise<void> {
-  const id = parseId(args);
+  const { format, args: remaining } = parseOutputFlag(args);
+  const id = parseId(remaining);
   const data = await requestClientJson(context, `/v1/todos/${id}`, {
     method: "DELETE",
   });
-  printJson(data);
+  if (format === "json") {
+    printJson(data);
+    return;
+  }
+  const nowMs = Date.now();
+  const timeZone = resolveTimeZone();
+  const todo = parseTodoPayload(data);
+  if (todo) {
+    console.log(formatTodoDocument(todo, nowMs, timeZone));
+    return;
+  }
+  console.log(
+    formatRecordMarkdown({
+      title: "Todo",
+      record: normalizeRecord(data),
+      timeZone,
+      nowMs,
+    })
+  );
+}
+
+type Todo = {
+  id: number;
+  text: string;
+  alarm_at: number | string | null;
+  completed: boolean;
+  created_at: number;
+};
+
+function parseTodosList(
+  payload: unknown
+): { todos: Todo[]; next_cursor: string | null } {
+  if (!payload || typeof payload !== "object") {
+    throw new Error("Invalid todos response.");
+  }
+  const data = payload as {
+    todos?: Todo[];
+    next_cursor?: string | null;
+  };
+  if (!Array.isArray(data.todos)) {
+    throw new Error("Invalid todos response.");
+  }
+  return {
+    todos: data.todos,
+    next_cursor: data.next_cursor ?? null,
+  };
+}
+
+function parseTodoPayload(payload: unknown): Todo | null {
+  if (!payload || typeof payload !== "object") {
+    return null;
+  }
+  if ("todo" in payload) {
+    const todo = (payload as { todo?: Todo }).todo;
+    if (todo) {
+      return todo;
+    }
+  }
+
+  const record = payload as Partial<Todo>;
+  if (
+    typeof record.id === "number" &&
+    typeof record.text === "string" &&
+    typeof record.created_at === "number" &&
+    typeof record.completed === "boolean"
+  ) {
+    return record as Todo;
+  }
+
+  return null;
+}
+
+function formatTodosSection(
+  todos: Todo[],
+  nowMs: number,
+  timeZone: string,
+  headingPrefix: string
+): string[] {
+  if (todos.length === 0) {
+    return ["- (none)", ""];
+  }
+
+  const lines: string[] = [];
+  for (const todo of todos) {
+    lines.push(...formatTodoBlock(todo, nowMs, timeZone, headingPrefix));
+  }
+  return lines;
+}
+
+function formatTodoDocument(
+  todo: Todo,
+  nowMs: number,
+  timeZone: string
+): string {
+  return formatTodoBlock(todo, nowMs, timeZone, "#").join("\n");
+}
+
+function formatTodoBlock(
+  todo: Todo,
+  nowMs: number,
+  timeZone: string,
+  headingPrefix: string
+): string[] {
+  const lines: string[] = [];
+  lines.push(`${headingPrefix} Todo ${todo.id}`, "");
+  lines.push(formatTimeZoneHeader(timeZone));
+  lines.push(`- created_at: ${formatDateValue(todo.created_at, timeZone, nowMs)}`);
+  lines.push(
+    `- alarm_at: ${formatDateValue(todo.alarm_at ?? null, timeZone, nowMs)}`
+  );
+  lines.push(`- completed: ${todo.completed ? "true" : "false"}`);
+  lines.push(`- text: ${todo.text.trim() || "(empty)"}`);
+  lines.push("");
+  return lines;
+}
+
+function normalizeRecord(payload: unknown): Record<string, unknown> {
+  if (payload && typeof payload === "object") {
+    return payload as Record<string, unknown>;
+  }
+  return { value: payload };
 }

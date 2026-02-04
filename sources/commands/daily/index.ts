@@ -1,9 +1,16 @@
 import type { Command, CommandContext } from "@/commands/types";
 import { printJson, requestClientJson } from "@/client/clientApi";
+import {
+  formatDateValue,
+  formatRecordMarkdown,
+  formatTimeZoneHeader,
+  parseOutputFlag,
+  resolveTimeZone,
+} from "@/utils/markdown";
 
 const USAGE = [
-  "bee daily list [--limit N] [--cursor CURSOR]",
-  "bee daily get <id>",
+  "bee daily list [--limit N] [--cursor CURSOR] [--json]",
+  "bee daily get <id> [--json]",
 ].join("\n");
 
 export const dailyCommand: Command = {
@@ -38,7 +45,8 @@ async function handleList(
   args: readonly string[],
   context: CommandContext
 ): Promise<void> {
-  const options = parseListArgs(args);
+  const { format, args: remaining } = parseOutputFlag(args);
+  const options = parseListArgs(remaining);
   const params = new URLSearchParams();
 
   if (options.limit !== undefined) {
@@ -51,7 +59,28 @@ async function handleList(
   const suffix = params.toString();
   const path = suffix ? `/v1/daily?${suffix}` : "/v1/daily";
   const data = await requestClientJson(context, path, { method: "GET" });
-  printJson(data);
+  if (format === "json") {
+    printJson(data);
+    return;
+  }
+  const payload = parseDailyList(data);
+  const nowMs = Date.now();
+  const lines: string[] = ["# Daily Summaries", ""];
+
+  if (payload.daily_summaries.length === 0) {
+    lines.push("- (none)", "");
+  } else {
+    for (const summary of payload.daily_summaries) {
+      lines.push(...formatDailySummaryBlock(summary, nowMs, "###"));
+    }
+  }
+
+  if (payload.next_cursor) {
+    lines.push("## Pagination", "");
+    lines.push(`- next_cursor: ${payload.next_cursor}`, "");
+  }
+
+  console.log(lines.join("\n"));
 }
 
 function parseListArgs(args: readonly string[]): ListOptions {
@@ -108,11 +137,30 @@ async function handleGet(
   args: readonly string[],
   context: CommandContext
 ): Promise<void> {
-  const id = parseId(args);
+  const { format, args: remaining } = parseOutputFlag(args);
+  const id = parseId(remaining);
   const data = await requestClientJson(context, `/v1/daily/${id}`, {
     method: "GET",
   });
-  printJson(data);
+  if (format === "json") {
+    printJson(data);
+    return;
+  }
+  const nowMs = Date.now();
+  const timeZone = resolveTimeZone();
+  const summary = parseDailyDetail(data);
+  if (!summary) {
+    console.log(
+      formatRecordMarkdown({
+        title: "Daily Summary",
+        record: normalizeRecord(data),
+        timeZone,
+        nowMs,
+      })
+    );
+    return;
+  }
+  console.log(formatDailyDetailDocument(summary, nowMs));
 }
 
 function parseId(args: readonly string[]): number {
@@ -128,4 +176,191 @@ function parseId(args: readonly string[]): number {
     throw new Error("Daily summary id must be a positive integer.");
   }
   return parsed;
+}
+
+type DailySummary = {
+  id: number;
+  date: string | null;
+  date_time: number | null;
+  timezone?: string | null;
+  short_summary: string;
+  summary: string | null;
+  email_summary: string | null;
+  calendar_summary: string | null;
+  conversations_count: number | null;
+  locations: Array<{
+    id: number | null;
+    latitude: number;
+    longitude: number;
+    address: string | null;
+  }> | null;
+  created_at: number | null;
+};
+
+type DailySummaryDetail = DailySummary & {
+  conversations: Array<{
+    id: number;
+    start_time: number;
+    end_time: number | null;
+    short_summary: string | null;
+    conversation_uuid: string;
+    device_type: string;
+    state: string;
+    primary_location: {
+      address: string | null;
+      latitude: number;
+      longitude: number;
+    } | null;
+    bookmarked: boolean;
+  }> | null;
+};
+
+function parseDailyList(
+  payload: unknown
+): { daily_summaries: DailySummary[]; next_cursor: string | null } {
+  if (!payload || typeof payload !== "object") {
+    throw new Error("Invalid daily response.");
+  }
+  const data = payload as {
+    daily_summaries?: DailySummary[];
+    next_cursor?: string | null;
+  };
+  if (!Array.isArray(data.daily_summaries)) {
+    throw new Error("Invalid daily response.");
+  }
+  return {
+    daily_summaries: data.daily_summaries,
+    next_cursor: data.next_cursor ?? null,
+  };
+}
+
+function parseDailyDetail(payload: unknown): DailySummaryDetail | null {
+  if (!payload || typeof payload !== "object") {
+    return null;
+  }
+  const data = payload as { daily_summary?: DailySummaryDetail };
+  if (!data.daily_summary) {
+    return null;
+  }
+  return data.daily_summary;
+}
+
+function formatDailySummaryBlock(
+  summary: DailySummary,
+  nowMs: number,
+  headingPrefix: string
+): string[] {
+  const timeZone = resolveTimeZone(summary.timezone);
+  const lines: string[] = [];
+  lines.push(`${headingPrefix} Daily Summary ${summary.id}`, "");
+  lines.push(formatTimeZoneHeader(timeZone));
+  lines.push(`- date: ${formatDateValue(summary.date, timeZone, nowMs)}`);
+  lines.push(
+    `- date_time: ${formatDateValue(summary.date_time, timeZone, nowMs)}`
+  );
+  lines.push(
+    `- created_at: ${formatDateValue(summary.created_at, timeZone, nowMs)}`
+  );
+  lines.push(
+    `- conversations_count: ${summary.conversations_count ?? "n/a"}`
+  );
+  lines.push(
+    `- short_summary: ${summary.short_summary.trim() || "(empty)"}`
+  );
+  lines.push("");
+  return lines;
+}
+
+function formatDailyDetailDocument(
+  summary: DailySummaryDetail,
+  nowMs: number
+): string {
+  const timeZone = resolveTimeZone(summary.timezone);
+  const lines: string[] = [`# Daily Summary ${summary.id}`, ""];
+
+  lines.push(formatTimeZoneHeader(timeZone));
+  lines.push(`- date: ${formatDateValue(summary.date, timeZone, nowMs)}`);
+  lines.push(
+    `- date_time: ${formatDateValue(summary.date_time, timeZone, nowMs)}`
+  );
+  lines.push(
+    `- created_at: ${formatDateValue(summary.created_at, timeZone, nowMs)}`
+  );
+  lines.push(
+    `- conversations_count: ${summary.conversations_count ?? "n/a"}`
+  );
+  lines.push("");
+
+  lines.push("## Short Summary", "");
+  lines.push(summary.short_summary.trim() || "(empty)", "");
+
+  if (summary.summary) {
+    lines.push("## Summary", "");
+    lines.push(summary.summary.trim() || "(empty)", "");
+  }
+
+  if (summary.email_summary) {
+    lines.push("## Email Summary", "");
+    lines.push(summary.email_summary.trim() || "(empty)", "");
+  }
+
+  if (summary.calendar_summary) {
+    lines.push("## Calendar Summary", "");
+    lines.push(summary.calendar_summary.trim() || "(empty)", "");
+  }
+
+  lines.push("## Locations", "");
+  if (summary.locations && summary.locations.length > 0) {
+    for (const location of summary.locations) {
+      const address = location.address ?? "unknown";
+      lines.push(
+        `- ${address} (${location.latitude.toFixed(5)}, ${location.longitude.toFixed(5)})`
+      );
+    }
+  } else {
+    lines.push("- (none)");
+  }
+  lines.push("");
+
+  lines.push("## Conversations", "");
+  if (summary.conversations && summary.conversations.length > 0) {
+    for (const conversation of summary.conversations) {
+      lines.push(`### Conversation ${conversation.id}`, "");
+      lines.push(formatTimeZoneHeader(timeZone));
+      lines.push(
+        `- start_time: ${formatDateValue(conversation.start_time, timeZone, nowMs)}`
+      );
+      lines.push(
+        `- end_time: ${formatDateValue(conversation.end_time, timeZone, nowMs)}`
+      );
+      lines.push(`- device_type: ${conversation.device_type}`);
+      lines.push(`- conversation_uuid: ${conversation.conversation_uuid}`);
+      lines.push(`- state: ${conversation.state}`);
+      lines.push(`- bookmarked: ${conversation.bookmarked ? "true" : "false"}`);
+      if (conversation.primary_location) {
+        const location = conversation.primary_location;
+        const address = location.address ?? "unknown";
+        lines.push(
+          `- primary_location: ${address} (${location.latitude.toFixed(5)}, ${location.longitude.toFixed(5)})`
+        );
+      } else {
+        lines.push("- primary_location: (none)");
+      }
+      lines.push(
+        `- short_summary: ${conversation.short_summary?.trim() || "(empty)"}`
+      );
+      lines.push("");
+    }
+  } else {
+    lines.push("- (none)", "");
+  }
+
+  return lines.join("\n");
+}
+
+function normalizeRecord(payload: unknown): Record<string, unknown> {
+  if (payload && typeof payload === "object") {
+    return payload as Record<string, unknown>;
+  }
+  return { value: payload };
 }

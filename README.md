@@ -43,38 +43,40 @@ bee <command> [options]
 
 ## Commands
 
+By default, data commands return markdown. Use `--json` to print raw JSON.
+
 - `login` - Log in interactively, or with `--token <token>` / `--token-stdin`.
 - `status` - Show current authentication status.
 - `logout` - Log out and clear stored credentials.
 
-- `me` - Fetch your user profile.
+- `me` - Fetch your user profile. Use `--json` for JSON output.
 
-- `today` - Fetch today's brief (calendar events and emails).
+- `today` - Fetch today's brief (calendar events and emails). Use `--json` for JSON output.
 
 - `facts` - Manage your facts (things Bee remembers about you).
-  - `facts list` - List facts. Options: `--limit N`, `--cursor <cursor>`, `--confirmed <true|false>`.
-  - `facts get <id>` - Get a specific fact.
-  - `facts create --text <text>` - Create a new fact.
-  - `facts update <id> --text <text>` - Update a fact. Options: `--confirmed <true|false>`.
-  - `facts delete <id>` - Delete a fact.
+  - `facts list` - List facts. Options: `--limit N`, `--cursor <cursor>`, `--confirmed <true|false>`, `--json`.
+  - `facts get <id>` - Get a specific fact. Options: `--json`.
+  - `facts create --text <text>` - Create a new fact. Options: `--json`.
+  - `facts update <id> --text <text>` - Update a fact. Options: `--confirmed <true|false>`, `--json`.
+  - `facts delete <id>` - Delete a fact. Options: `--json`.
 
 - `todos` - Manage your todos.
-  - `todos list` - List todos. Options: `--limit N`, `--cursor <cursor>`.
-  - `todos get <id>` - Get a specific todo.
-  - `todos create --text <text>` - Create a new todo. Options: `--alarm-at <iso>`.
-  - `todos update <id>` - Update a todo. Options: `--text <text>`, `--completed <true|false>`, `--alarm-at <iso>`, `--clear-alarm`.
-  - `todos delete <id>` - Delete a todo.
+  - `todos list` - List todos. Options: `--limit N`, `--cursor <cursor>`, `--json`.
+  - `todos get <id>` - Get a specific todo. Options: `--json`.
+  - `todos create --text <text>` - Create a new todo. Options: `--alarm-at <iso>`, `--json`.
+  - `todos update <id>` - Update a todo. Options: `--text <text>`, `--completed <true|false>`, `--alarm-at <iso>`, `--clear-alarm`, `--json`.
+  - `todos delete <id>` - Delete a todo. Options: `--json`.
 
 - `conversations` - Access your recorded conversations.
-  - `conversations list` - List conversations. Options: `--limit N`, `--cursor <cursor>`.
-  - `conversations get <id>` - Get a specific conversation with full transcript.
+  - `conversations list` - List conversations. Options: `--limit N`, `--cursor <cursor>`, `--json`.
+  - `conversations get <id>` - Get a specific conversation with full transcript. Options: `--json`.
 
 - `daily` - Access daily summaries of your activity.
-  - `daily list` - List daily summaries. Options: `--limit N`.
-  - `daily get <id>` - Get a specific daily summary.
+  - `daily list` - List daily summaries. Options: `--limit N`, `--json`.
+  - `daily get <id>` - Get a specific daily summary. Options: `--json`.
 
 - `search` - Search your data.
-  - `search conversations --query <text>` - Search conversations. Options: `--limit N`, `--cursor <cursor>`.
+  - `search conversations --query <text>` - Search conversations. Options: `--limit N`, `--cursor <cursor>`, `--json`.
 
 - `sync` - Export your Bee data to markdown files for AI agents. Options: `--output <dir>`, `--recent-days N`, `--only <facts|todos|daily|conversations>`.
 

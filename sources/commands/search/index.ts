@@ -1,8 +1,13 @@
 import type { Command, CommandContext } from "@/commands/types";
 import { printJson, requestClientJson } from "@/client/clientApi";
+import {
+  formatRecordMarkdown,
+  parseOutputFlag,
+  resolveTimeZone,
+} from "@/utils/markdown";
 
 const USAGE =
-  "bee search conversations --query <text> [--limit N] [--cursor <cursor>]";
+  "bee search conversations --query <text> [--limit N] [--cursor <cursor>] [--json]";
 
 export const searchCommand: Command = {
   name: "search",
@@ -34,7 +39,8 @@ async function handleConversations(
   args: readonly string[],
   context: CommandContext
 ): Promise<void> {
-  const options = parseConversationsArgs(args);
+  const { format, args: remaining } = parseOutputFlag(args);
+  const options = parseConversationsArgs(remaining);
   const body: { query: string; limit?: number; cursor?: string } = {
     query: options.query,
   };
@@ -50,7 +56,51 @@ async function handleConversations(
     method: "POST",
     json: body,
   });
-  printJson(data);
+  if (format === "json") {
+    printJson(data);
+    return;
+  }
+
+  const nowMs = Date.now();
+  const payload = parseSearchConversations(data);
+  if (!payload) {
+    const timeZone = resolveTimeZone(extractTimeZone(data));
+    console.log(
+      formatRecordMarkdown({
+        title: "Conversation Search Results",
+        record: normalizeRecord(data),
+        timeZone,
+        nowMs,
+      })
+    );
+    return;
+  }
+
+  const lines: string[] = ["# Conversation Search Results", ""];
+  if (payload.conversations.length === 0) {
+    lines.push("- (none)", "");
+  } else {
+    for (const conversation of payload.conversations) {
+      const timeZone = resolveTimeZone(extractTimeZone(conversation));
+      lines.push(
+        formatRecordMarkdown({
+          title: `Conversation ${conversation.id ?? "unknown"}`,
+          record: conversation,
+          timeZone,
+          nowMs,
+          headingLevel: 3,
+        }).trimEnd()
+      );
+      lines.push("");
+    }
+  }
+
+  if (payload.next_cursor) {
+    lines.push("## Pagination", "");
+    lines.push(`- next_cursor: ${payload.next_cursor}`, "");
+  }
+
+  console.log(lines.join("\n"));
 }
 
 function parseConversationsArgs(args: readonly string[]): ConversationsOptions {
@@ -123,4 +173,62 @@ function parseConversationsArgs(args: readonly string[]): ConversationsOptions {
   }
 
   return options;
+}
+
+type ConversationSearchItem = Record<string, unknown> & {
+  id?: number;
+  timezone?: string | null;
+  time_zone?: string | null;
+  timeZone?: string | null;
+};
+
+function parseSearchConversations(
+  payload: unknown
+): { conversations: ConversationSearchItem[]; next_cursor: string | null } | null {
+  if (!payload || typeof payload !== "object") {
+    return null;
+  }
+  const data = payload as Record<string, unknown>;
+  const candidates = [
+    data["conversations"],
+    data["results"],
+    data["matches"],
+    data["items"],
+  ];
+  const list = candidates.find((candidate) => Array.isArray(candidate));
+  if (!Array.isArray(list)) {
+    return null;
+  }
+  return {
+    conversations: list as ConversationSearchItem[],
+    next_cursor:
+      typeof data["next_cursor"] === "string" || data["next_cursor"] === null
+        ? (data["next_cursor"] as string | null)
+        : null,
+  };
+}
+
+function extractTimeZone(value: unknown): string | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  const record = value as Record<string, unknown>;
+  const candidates = [
+    record["timezone"],
+    record["time_zone"],
+    record["timeZone"],
+  ];
+  for (const candidate of candidates) {
+    if (typeof candidate === "string" && candidate.length > 0) {
+      return candidate;
+    }
+  }
+  return null;
+}
+
+function normalizeRecord(payload: unknown): Record<string, unknown> {
+  if (payload && typeof payload === "object") {
+    return payload as Record<string, unknown>;
+  }
+  return { value: payload };
 }
