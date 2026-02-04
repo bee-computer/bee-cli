@@ -19,5 +19,5 @@ bun run build
 
 npm version "$VERSION" -m "chore(release): %s"
 
-npm publish --access public
+bun publish --access public
 git push --follow-tags
