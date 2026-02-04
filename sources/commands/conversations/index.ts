@@ -279,18 +279,19 @@ function formatConversationSummaryBlock(
   headingPrefix: string
 ): string[] {
   const lines: string[] = [];
-  lines.push(`${headingPrefix} Conversation ${conversation.id}`, "");
-  const startTime = resolveConversationStartTime(conversation);
+  lines.push(`${headingPrefix} Conversation ${conversation.id}`);
   lines.push(
-    `- start_time: ${formatDateValue(startTime, timeZone, nowMs)}`
+    `> To read the full conversation, run: \`bee conversations get ${conversation.id}\``
   );
+  lines.push("");
+  const startTime = resolveConversationStartTime(conversation);
+  lines.push(`- start_time: ${formatDateValue(startTime, timeZone, nowMs)}`);
   if (conversation.end_time !== null) {
     lines.push(
       `- end_time: ${formatDateValue(conversation.end_time, timeZone, nowMs)}`
     );
   }
   lines.push(`- state: ${conversation.state}`);
-  lines.push(`> To read the full conversation, run: \`bee conversations get ${conversation.id}\``);
   lines.push("");
   lines.push(...formatSummaryText(conversation.summary));
   lines.push("");

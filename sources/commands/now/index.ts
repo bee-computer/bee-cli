@@ -216,7 +216,11 @@ function formatConversationNow(
   nowMs: number
 ): string[] {
   const lines: string[] = [];
-  lines.push(`## Conversation ${conversation.id}`, "");
+  lines.push(`## Conversation ${conversation.id}`);
+  lines.push(
+    `> To read the full conversation, run: \`bee conversations get ${conversation.id}\``
+  );
+  lines.push("");
   lines.push(
     `- start_time: ${formatDateValue(conversation.start_time, timeZone, nowMs)}`
   );
