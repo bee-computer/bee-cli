@@ -349,7 +349,6 @@ function formatDailyDetailDocument(
         `- end_time: ${formatDateValue(conversation.end_time, timeZone, nowMs)}`
       );
       lines.push(`- device_type: ${conversation.device_type}`);
-      lines.push(`- conversation_uuid: ${conversation.conversation_uuid}`);
       lines.push(`- state: ${conversation.state}`);
       lines.push(`- bookmarked: ${conversation.bookmarked ? "true" : "false"}`);
       if (conversation.primary_location) {
