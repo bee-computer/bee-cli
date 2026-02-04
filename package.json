@@ -18,6 +18,7 @@
     "build": "bun build ./sources/main.ts --compile --outfile ./dist/bee",
     "build:all": "bash ./scripts/build-all.sh",
     "dev": "bun ./sources/main.ts",
+    "prepack": "bun run build:all",
     "prepublishOnly": "bun run build:all",
     "postinstall": "node ./scripts/postinstall.js",
     "typecheck": "tsc --noEmit"
