@@ -7,7 +7,7 @@ import {
   resolveTimeZone,
 } from "@/utils/markdown";
 
-const USAGE = "bee changed [--since <unix>] [--json]";
+const USAGE = "bee changed [--cursor <cursor>] [--json]";
 
 export const changedCommand: Command = {
   name: "changed",
@@ -16,14 +16,18 @@ export const changedCommand: Command = {
   run: async (args, context) => {
     const { format, args: remaining } = parseOutputFlag(args);
     const options = parseChangedArgs(remaining);
-    const since = options.since ?? resolveDefaultSince();
-    const query = new URLSearchParams({ since }).toString();
-    const data = await requestClientJson(context, `/v1/changes?${query}`, {
+    const cursor = options.cursor;
+    const query = cursor ? `?cursor=${encodeURIComponent(cursor)}` : "";
+    const data = await requestClientJson(context, `/v1/changes${query}`, {
       method: "GET",
     });
     const payload = parseChangesResponse(data);
-    const nowMs = payload.now ?? Date.now();
+    const nowSeconds = normalizeUnixSeconds(payload.now);
+    const nowMs = normalizeUnixMs(payload.now);
     const timeZone = resolveTimeZone(payload.timezone);
+    const sinceSeconds =
+      parseCursorSeconds(cursor ?? payload.cursor ?? null) ??
+      Math.max(0, nowSeconds - 24 * 60 * 60);
 
     const [facts, todos, dailies, conversations, journals] = await Promise.all([
       fetchFacts(context, payload.facts),
@@ -35,8 +39,9 @@ export const changedCommand: Command = {
 
     const combined = {
       meta: {
-        since,
-        now: payload.now,
+        cursor,
+        next_cursor: payload.next_cursor ?? null,
+        now: nowSeconds,
         updated: payload.updated,
         timezone: payload.timezone,
       },
@@ -54,9 +59,9 @@ export const changedCommand: Command = {
 
     const output: string[] = [];
     output.push(
-      `# Changed Since ${formatDateValue(Number.parseInt(since, 10), timeZone, nowMs)}`,
+      `# Changed Since ${formatDateValue(sinceSeconds, timeZone, nowMs)}`,
       "",
-      `Current Unix Time: ${payload.now}`,
+      `Current Unix Time: ${nowSeconds}`,
       ""
     );
 
@@ -88,12 +93,12 @@ export const changedCommand: Command = {
 };
 
 type ChangedOptions = {
-  since?: string;
+  cursor?: string;
 };
 
 function parseChangedArgs(args: readonly string[]): ChangedOptions {
   const positionals: string[] = [];
-  let since: string | undefined;
+  let cursor: string | undefined;
 
   for (let i = 0; i < args.length; i += 1) {
     const arg = args[i];
@@ -101,16 +106,12 @@ function parseChangedArgs(args: readonly string[]): ChangedOptions {
       continue;
     }
 
-    if (arg === "--since") {
+    if (arg === "--cursor") {
       const value = args[i + 1];
       if (value === undefined) {
-        throw new Error("--since requires a value");
+        throw new Error("--cursor requires a value");
       }
-      const parsed = Number.parseInt(value, 10);
-      if (!Number.isFinite(parsed) || parsed <= 0) {
-        throw new Error("--since must be a unix timestamp in seconds");
-      }
-      since = String(parsed);
+      cursor = value;
       i += 1;
       continue;
     }
@@ -127,16 +128,10 @@ function parseChangedArgs(args: readonly string[]): ChangedOptions {
   }
 
   const options: ChangedOptions = {};
-  if (since) {
-    options.since = since;
+  if (cursor) {
+    options.cursor = cursor;
   }
   return options;
-}
-
-function resolveDefaultSince(): string {
-  const nowMs = Date.now();
-  const sinceMs = nowMs - 24 * 60 * 60 * 1000;
-  return String(Math.floor(sinceMs / 1000));
 }
 
 type ChangesResponse = {
@@ -148,6 +143,8 @@ type ChangesResponse = {
   now: number;
   updated: boolean;
   timezone: string | null;
+  cursor?: string | null;
+  next_cursor?: string | null;
 };
 
 function parseChangesResponse(payload: unknown): ChangesResponse {
@@ -163,6 +160,8 @@ function parseChangesResponse(payload: unknown): ChangesResponse {
     now?: number;
     updated?: boolean;
     timezone?: string;
+    cursor?: string | null;
+    next_cursor?: string | null;
   };
 
   if (
@@ -184,6 +183,8 @@ function parseChangesResponse(payload: unknown): ChangesResponse {
     now: typeof data.now === "number" ? data.now : Date.now(),
     updated: data.updated === true,
     timezone: typeof data.timezone === "string" ? data.timezone : null,
+    cursor: typeof data.cursor === "string" ? data.cursor : null,
+    next_cursor: typeof data.next_cursor === "string" ? data.next_cursor : null,
   };
 }
 
@@ -642,4 +643,29 @@ function formatSummaryText(text: string | null): string[] {
     return ["(empty)"];
   }
   return normalized.split(/\r?\n/);
+}
+
+function normalizeUnixSeconds(value: number): number {
+  if (!Number.isFinite(value)) {
+    return Math.floor(Date.now() / 1000);
+  }
+  return value > 1e12 ? Math.floor(value / 1000) : Math.floor(value);
+}
+
+function normalizeUnixMs(value: number): number {
+  if (!Number.isFinite(value)) {
+    return Date.now();
+  }
+  return value > 1e12 ? value : value * 1000;
+}
+
+function parseCursorSeconds(cursor?: string | null): number | null {
+  if (!cursor) {
+    return null;
+  }
+  const parsed = Number.parseInt(cursor, 10);
+  if (!Number.isFinite(parsed)) {
+    return null;
+  }
+  return parsed;
 }
