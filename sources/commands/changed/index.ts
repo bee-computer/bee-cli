@@ -7,7 +7,7 @@ import {
   resolveTimeZone,
 } from "@/utils/markdown";
 
-const USAGE = "bee changed --since <iso> [--json]";
+const USAGE = "bee changed [--since <iso>] [--json]";
 
 export const changedCommand: Command = {
   name: "changed",
@@ -16,8 +16,8 @@ export const changedCommand: Command = {
   run: async (args, context) => {
     const { format, args: remaining } = parseOutputFlag(args);
     const options = parseChangedArgs(remaining);
-
-    const query = new URLSearchParams({ since: options.since }).toString();
+    const since = options.since ?? resolveDefaultSince();
+    const query = new URLSearchParams({ since }).toString();
     const data = await requestClientJson(context, `/v1/changes?${query}`, {
       method: "GET",
     });
@@ -35,7 +35,7 @@ export const changedCommand: Command = {
 
     const combined = {
       meta: {
-        since: options.since,
+        since,
         now: payload.now,
         updated: payload.updated,
         timezone: payload.timezone,
@@ -77,7 +77,7 @@ export const changedCommand: Command = {
 };
 
 type ChangedOptions = {
-  since: string;
+  since?: string;
 };
 
 function parseChangedArgs(args: readonly string[]): ChangedOptions {
@@ -107,15 +107,21 @@ function parseChangedArgs(args: readonly string[]): ChangedOptions {
     positionals.push(arg);
   }
 
-  if (!since) {
-    throw new Error("Missing --since. Provide an ISO date/time.");
-  }
-
   if (positionals.length > 0) {
     throw new Error(`Unexpected arguments: ${positionals.join(" ")}`);
   }
 
-  return { since };
+  const options: ChangedOptions = {};
+  if (since) {
+    options.since = since;
+  }
+  return options;
+}
+
+function resolveDefaultSince(): string {
+  const nowMs = Date.now();
+  const sinceMs = nowMs - 24 * 60 * 60 * 1000;
+  return new Date(sinceMs).toISOString();
 }
 
 type ChangesResponse = {
