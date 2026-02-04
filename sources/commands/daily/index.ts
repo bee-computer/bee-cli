@@ -275,7 +275,6 @@ function formatDailySummaryBlock(
   const resolvedDate = resolveDailyDate(summary);
   lines.push(`- date: ${formatDateValue(resolvedDate, timeZone, nowMs)}`);
   lines.push("");
-  lines.push("Summary:");
   lines.push(...formatQuotedText(summary.summary ?? ""));
   lines.push("");
   return lines;
@@ -380,7 +379,7 @@ function resolveDailyDate(
 function formatQuotedText(text: string): string[] {
   const normalized = text.trim();
   if (!normalized) {
-    return ["> (empty)"];
+    return ["(empty)"];
   }
-  return normalized.split(/\r?\n/).map((line) => `> ${line}`);
+  return normalized.split(/\r?\n/);
 }
