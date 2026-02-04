@@ -10,6 +10,7 @@
   "files": [
     "bin/bee.js",
     "dist/platforms",
+    "scripts/postinstall.js",
     "README.md",
     "LICENSE"
   ],
