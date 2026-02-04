@@ -10,6 +10,7 @@ import { pingCommand } from "@/commands/ping";
 import { proxyCommand } from "@/commands/proxy";
 import { searchCommand } from "@/commands/search";
 import { statusCommand } from "@/commands/status";
+import { streamCommand } from "@/commands/stream";
 import { syncCommand } from "@/commands/sync";
 import { todosCommand } from "@/commands/todos";
 import { todayCommand } from "@/commands/today";
@@ -28,6 +29,7 @@ const commands = [
   factsCommand,
   meCommand,
   searchCommand,
+  streamCommand,
   syncCommand,
   proxyCommand,
   todosCommand,
