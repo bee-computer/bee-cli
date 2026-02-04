@@ -22,7 +22,6 @@ export const changedCommand: Command = {
       method: "GET",
     });
     const payload = parseChangesResponse(data);
-    const nowSeconds = normalizeUnixSeconds(payload.until);
     const nowMs = normalizeUnixMs(payload.until);
     const timeZone = resolveTimeZone(payload.timezone);
 
@@ -58,8 +57,6 @@ export const changedCommand: Command = {
     const output: string[] = [];
     output.push("# Changed", "", `From: ${formatDateValue(payload.since, timeZone, nowMs)}`);
     output.push(`Until: ${formatDateValue(payload.until, timeZone, nowMs)}`);
-    output.push(`Current Unix Time: ${nowSeconds}`);
-    output.push(`Cursor: ${cursor ?? "(none)"}`);
     output.push(`Next Cursor: ${payload.next_cursor ?? "(none)"}`, "");
 
     const sections = renderChangedSections({
@@ -640,13 +637,6 @@ function formatSummaryText(text: string | null): string[] {
     return ["(empty)"];
   }
   return normalized.split(/\r?\n/);
-}
-
-function normalizeUnixSeconds(value: number): number {
-  if (!Number.isFinite(value)) {
-    return Math.floor(Date.now() / 1000);
-  }
-  return value > 1e12 ? Math.floor(value / 1000) : Math.floor(value);
 }
 
 function normalizeUnixMs(value: number): number {
