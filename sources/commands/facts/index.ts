@@ -92,6 +92,7 @@ async function handleList(
   lines.push(...formatFactsSection(pending, nowMs, timeZone, "###"));
 
   if (payload.next_cursor) {
+    lines.push("-----", "");
     lines.push("## Pagination", "");
     lines.push(`- next_cursor: ${payload.next_cursor}`, "");
   }

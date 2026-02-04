@@ -81,6 +81,7 @@ async function handleList(
   }
 
   if (payload.next_cursor) {
+    lines.push("-----", "");
     lines.push("## Pagination", "");
     lines.push(`- next_cursor: ${payload.next_cursor}`, "");
   }
