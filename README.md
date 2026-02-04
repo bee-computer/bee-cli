@@ -111,6 +111,7 @@ event includes an `event` name and a JSON `data` payload.
 
 Use `--format message` for a single-line, agent-friendly output like:
 `Event new-utterance: [speaker_1] "Hello there" conv=uuid-string`.
+Webhook templates use the same agent-friendly message for `{{message}}`.
 
 Below are the event types and the payload fields the CLI expects/prints.
 

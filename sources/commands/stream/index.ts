@@ -340,7 +340,7 @@ async function handleEvent(
         if (webhook && shouldSendWebhook(event.event, options)) {
             const agentMessage = "Event connected: stream connected.";
             await sendWebhook(webhook, {
-                message: "CONNECTED",
+                message: agentMessage,
                 agentMessage,
                 event: event.event,
                 timestamp,
@@ -376,7 +376,7 @@ async function handleEvent(
 
     if (webhook && shouldSendWebhook(event.event, options)) {
         const payload: WebhookPayload = {
-            message: formattedPlain,
+            message: agentMessage,
             agentMessage,
             event: event.event,
             timestamp,
