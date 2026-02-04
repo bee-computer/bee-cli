@@ -18,6 +18,7 @@ const SUPPORTED_EVENT_TYPES = [
     'journal-created',
     'journal-updated',
     'journal-deleted',
+    'journal-text',
 ] as const;
 
 type StreamOptions = {
@@ -377,6 +378,11 @@ function formatEvent(eventType: string, data: Record<string, unknown>): string {
             const reason = data["reason"];
             return reason ? `id=${journalId} reason=${reason}` : `id=${journalId}`;
         }
+        case "journal-text": {
+            const journalId = data["journalId"] ?? "?";
+            const text = data["text"] as string | undefined;
+            return text ? `id=${journalId} "${truncate(text, 100)}"` : `id=${journalId}`;
+        }
         default:
             return JSON.stringify(data);
     }
@@ -410,6 +416,7 @@ function colored(eventType: string): string {
         "journal-created": "\x1b[32m",
         "journal-updated": "\x1b[33m",
         "journal-deleted": "\x1b[31m",
+        "journal-text": "\x1b[36m",
     };
     const color = colors[eventType] ?? "\x1b[37m"; // white default
     return `${color}${eventType}\x1b[0m`;
