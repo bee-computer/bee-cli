@@ -258,7 +258,7 @@ function resolveSummaryText(conversation: ConversationDetail): string {
 
 function formatSummaryLines(text: string): string[] {
   if (!text) {
-    return ["(empty)"];
+    return ["(no summary generated yet)"];
   }
   return text.split(/\r?\n/);
 }

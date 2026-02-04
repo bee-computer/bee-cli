@@ -290,6 +290,7 @@ function formatConversationSummaryBlock(
     );
   }
   lines.push(`- state: ${conversation.state}`);
+  lines.push(`- command: \`bee conversations get ${conversation.id}\``);
   lines.push("");
   lines.push(...formatSummaryText(conversation.summary));
   lines.push("");
@@ -426,7 +427,7 @@ function resolveConversationStartTime(
 function formatSummaryText(summary: string | null): string[] {
   const normalized = summary?.trim() ?? "";
   if (!normalized) {
-    return ["(empty)"];
+    return ["(no summary generated yet)"];
   }
   return normalized.split(/\r?\n/);
 }
