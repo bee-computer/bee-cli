@@ -1,5 +1,6 @@
 import type { Command, CommandContext } from "@/commands/types";
 import { loadToken } from "@/secureStore";
+import Handlebars from "handlebars";
 
 const SUPPORTED_EVENT_TYPES = [
     // Conversations
@@ -24,12 +25,15 @@ const SUPPORTED_EVENT_TYPES = [
 type StreamOptions = {
     types?: string[];
     json: boolean;
+    webhookEndpoint?: string;
+    webhookBody?: string;
 };
 
 const USAGE = [
     "bee stream",
     "bee stream --types new-utterance,update-conversation",
     "bee stream --json",
+    "bee stream --webhook-endpoint https://example.com/hooks/agent --webhook-body '{\"message\":\"{{message}}\"}'",
 ].join("\n");
 
 const DESCRIPTION = "Stream real-time events from the server.";
@@ -69,6 +73,26 @@ function parseArgs(args: readonly string[]): StreamOptions {
             continue;
         }
 
+        if (arg === "--webhook-endpoint") {
+            const value = args[i + 1];
+            if (value === undefined) {
+                throw new Error("--webhook-endpoint requires a value");
+            }
+            options.webhookEndpoint = value;
+            i += 1;
+            continue;
+        }
+
+        if (arg === "--webhook-body") {
+            const value = args[i + 1];
+            if (value === undefined) {
+                throw new Error("--webhook-body requires a value");
+            }
+            options.webhookBody = value;
+            i += 1;
+            continue;
+        }
+
         if (arg.startsWith("-")) {
             throw new Error(`Unknown option: ${arg}`);
         }
@@ -78,6 +102,14 @@ function parseArgs(args: readonly string[]): StreamOptions {
 
     if (positionals.length > 0) {
         throw new Error(`Unexpected arguments: ${positionals.join(" ")}`);
+    }
+
+    if (options.webhookEndpoint && !options.webhookBody) {
+        throw new Error("--webhook-body is required when --webhook-endpoint is set");
+    }
+
+    if (options.webhookBody && !options.webhookEndpoint) {
+        throw new Error("--webhook-endpoint is required when --webhook-body is set");
     }
 
     return options;
@@ -99,6 +131,7 @@ async function handleStream(
 
     const suffix = params.toString();
     const path = suffix ? `/v1/stream?${suffix}` : "/v1/stream";
+    const webhook = buildWebhook(options);
 
     if (!options.json) {
         console.log("Connecting to event stream...");
@@ -137,7 +170,7 @@ async function handleStream(
             throw new Error("No response body");
         }
 
-        await processSSEStream(response.body, options);
+        await processSSEStream(response.body, options, webhook);
     } catch (error) {
         if (error instanceof Error && error.name === "AbortError") {
             return;
@@ -148,7 +181,8 @@ async function handleStream(
 
 async function processSSEStream(
     body: ReadableStream<Uint8Array>,
-    options: StreamOptions
+    options: StreamOptions,
+    webhook: WebhookConfig | null
 ): Promise<void> {
     const reader = body.getReader();
     const decoder = new TextDecoder();
@@ -169,7 +203,7 @@ async function processSSEStream(
             buffer = events.remaining;
 
             for (const event of events.parsed) {
-                handleEvent(event, options);
+                await handleEvent(event, options, webhook);
             }
         }
     } finally {
@@ -238,38 +272,131 @@ function parseSSEBuffer(buffer: string): ParsedEvents {
     return { parsed, remaining };
 }
 
-function handleEvent(event: SSEEvent, options: StreamOptions): void {
-    if (options.json) {
-        // Raw JSON output for piping
-        console.log(event.data);
-        return;
+type WebhookPayload = {
+    message: string;
+    event: string;
+    timestamp: string;
+    data?: Record<string, unknown>;
+    raw: string;
+};
+
+type WebhookConfig = {
+    endpoint: string;
+    template: Handlebars.TemplateDelegate<WebhookPayload>;
+};
+
+function buildWebhook(options: StreamOptions): WebhookConfig | null {
+    if (!options.webhookEndpoint || !options.webhookBody) {
+        return null;
     }
 
-    // Formatted output
+    const template = Handlebars.compile(options.webhookBody, { noEscape: true });
+    return { endpoint: options.webhookEndpoint, template };
+}
+
+async function handleEvent(
+    event: SSEEvent,
+    options: StreamOptions,
+    webhook: WebhookConfig | null
+): Promise<void> {
     const timestamp = new Date().toISOString();
 
     if (event.event === "connected") {
-        console.log(`${dim(timestamp)} ${green("CONNECTED")}`);
+        if (options.json) {
+            console.log(event.data);
+        } else {
+            console.log(`${dim(timestamp)} ${green("CONNECTED")}`);
+        }
+
+        if (webhook) {
+            await sendWebhook(webhook, {
+                message: "CONNECTED",
+                event: event.event,
+                timestamp,
+                raw: event.data,
+            });
+        }
+        return;
+    }
+
+    let data: Record<string, unknown> | undefined;
+    let formattedPlain = event.data;
+    let formattedColored = event.data;
+
+    try {
+        data = JSON.parse(event.data) as Record<string, unknown>;
+        formattedPlain = formatEvent(event.event, data, (text) => text);
+        formattedColored = formatEvent(event.event, data, dim);
+    } catch {
+        // Keep raw payload
+    }
+
+    if (options.json) {
+        // Raw JSON output for piping
+        console.log(event.data);
+    } else {
+        // Formatted output
+        console.log(`${dim(timestamp)} ${colored(event.event)} ${formattedColored}`);
+    }
+
+    if (webhook) {
+        const payload: WebhookPayload = {
+            message: formattedPlain,
+            event: event.event,
+            timestamp,
+            raw: event.data,
+        };
+        if (data) {
+            payload.data = data;
+        }
+        await sendWebhook(webhook, payload);
+    }
+}
+
+async function sendWebhook(
+    webhook: WebhookConfig,
+    payload: WebhookPayload
+): Promise<void> {
+    let body: string;
+    try {
+        body = webhook.template(payload);
+    } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.error(`Webhook template failed: ${message}`);
         return;
     }
 
     try {
-        const data = JSON.parse(event.data) as Record<string, unknown>;
-        const formatted = formatEvent(event.event, data);
-        console.log(`${dim(timestamp)} ${colored(event.event)} ${formatted}`);
-    } catch {
-        console.log(`${dim(timestamp)} ${colored(event.event)} ${event.data}`);
+        const response = await fetch(webhook.endpoint, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+            },
+            body,
+        });
+
+        if (!response.ok) {
+            const text = await response.text();
+            console.error(`Webhook request failed: ${response.status} ${text}`);
+        }
+    } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.error(`Webhook request failed: ${message}`);
     }
 }
 
-function formatEvent(eventType: string, data: Record<string, unknown>): string {
+function formatEvent(
+    eventType: string,
+    data: Record<string, unknown>,
+    dimText: (text: string) => string
+): string {
     switch (eventType) {
         case "new-utterance": {
             const utterance = data["utterance"] as Record<string, unknown> | undefined;
             const text = utterance?.["text"] ?? "";
             const speaker = utterance?.["speaker"] ?? "unknown";
             const convUuid = data["conversation_uuid"] ?? "";
-            return `[${speaker}] "${text}"${convUuid ? ` ${dim(`conv=${convUuid}`)}` : ""}`;
+            return `[${speaker}] "${text}"${convUuid ? ` ${dimText(`conv=${convUuid}`)}` : ""}`;
         }
         case "new-conversation": {
             const conv = data["conversation"] as Record<string, unknown> | undefined;
@@ -278,7 +405,7 @@ function formatEvent(eventType: string, data: Record<string, unknown>): string {
             const state = conv?.["state"] ?? "?";
             const title = conv?.["title"];
             let result = `id=${id} state=${state}`;
-            if (uuid) result += ` ${dim(`uuid=${uuid}`)}`;
+            if (uuid) result += ` ${dimText(`uuid=${uuid}`)}`;
             if (title) result += `\n    title: "${title}"`;
             return result;
         }
@@ -312,7 +439,7 @@ function formatEvent(eventType: string, data: Record<string, unknown>): string {
             const convId = data["conversation_id"];
             let result = `lat=${lat} lng=${lng}`;
             if (name) result += ` "${name}"`;
-            if (convId) result += ` ${dim(`conv=${convId}`)}`;
+            if (convId) result += ` ${dimText(`conv=${convId}`)}`;
             return result;
         }
         case "todo-created":

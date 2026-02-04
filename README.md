@@ -64,6 +64,8 @@ By default, data commands return markdown. Use `--json` to print raw JSON.
 
 - `changed` - Fetch recent changes (defaults to last 24 hours). Use `--cursor <cursor>` and `--json` for JSON output.
 
+- `stream` - Stream real-time events. Options: `--types <list>`, `--json`, `--webhook-endpoint <url>`, `--webhook-body <template>`.
+
 - `facts` - Manage your facts (things Bee remembers about you).
   - `facts list` - List facts. Options: `--limit N`, `--cursor <cursor>`, `--unconfirmed`, `--json`.
   - `facts get <id>` - Get a specific fact. Options: `--json`.
