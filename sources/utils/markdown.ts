@@ -33,7 +33,7 @@ export function formatAiDateTime(
   nowMs: number
 ): string {
   const { date, time } = formatDateTimeParts(epochMs, timeZone);
-  const relative = formatRelativeMinutes(nowMs, epochMs);
+  const relative = formatRelativeTime(nowMs, epochMs);
   return `${date} ${time} [${relative}]`;
 }
 
@@ -124,11 +124,23 @@ function formatDateTimeParts(
   };
 }
 
-function formatRelativeMinutes(nowMs: number, epochMs: number): string {
+function formatRelativeTime(nowMs: number, epochMs: number): string {
   const diffMs = nowMs - epochMs;
-  const diffMinutes = Math.round(Math.abs(diffMs) / 60000);
+  const diffSeconds = Math.round(Math.abs(diffMs) / 1000);
+  const diffMinutes = Math.round(diffSeconds / 60);
+  const diffHours = Math.round(diffMinutes / 60);
+  const diffDays = Math.round(diffHours / 24);
   const suffix = diffMs >= 0 ? "ago" : "from now";
-  return `${diffMinutes}min ${suffix}`;
+  if (diffSeconds < 90) {
+    return `${diffSeconds}sec ${suffix}`;
+  }
+  if (diffMinutes < 90) {
+    return `${diffMinutes}min ${suffix}`;
+  }
+  if (diffHours < 36) {
+    return `${diffHours}hr ${suffix}`;
+  }
+  return `${diffDays}day ${suffix}`;
 }
 
 function normalizeEpochMs(value: number): number | null {

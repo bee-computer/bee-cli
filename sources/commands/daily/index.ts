@@ -71,9 +71,12 @@ async function handleList(
   if (payload.daily_summaries.length === 0) {
     lines.push("- (none)", "");
   } else {
-    for (const summary of payload.daily_summaries) {
+    payload.daily_summaries.forEach((summary, index) => {
       lines.push(...formatDailySummaryBlock(summary, nowMs, timeZone, "###"));
-    }
+      if (index < payload.daily_summaries.length - 1) {
+        lines.push("-----", "");
+      }
+    });
   }
 
   if (payload.next_cursor) {
@@ -268,20 +271,11 @@ function formatDailySummaryBlock(
 ): string[] {
   const lines: string[] = [];
   lines.push(`${headingPrefix} Daily Summary ${summary.id}`, "");
+  const resolvedDate = resolveDailyDate(summary);
   lines.push(formatTimeZoneHeader(timeZone));
-  lines.push(`- date: ${formatDateValue(summary.date, timeZone, nowMs)}`);
-  lines.push(
-    `- date_time: ${formatDateValue(summary.date_time, timeZone, nowMs)}`
-  );
-  lines.push(
-    `- created_at: ${formatDateValue(summary.created_at, timeZone, nowMs)}`
-  );
-  lines.push(
-    `- conversations_count: ${summary.conversations_count ?? "n/a"}`
-  );
-  lines.push(
-    `- short_summary: ${summary.short_summary.trim() || "(empty)"}`
-  );
+  lines.push(`- date: ${formatDateValue(resolvedDate, timeZone, nowMs)}`);
+  lines.push("- short_summary:");
+  lines.push(...formatQuotedText(summary.short_summary));
   lines.push("");
   return lines;
 }
@@ -293,21 +287,13 @@ function formatDailyDetailDocument(
 ): string {
   const lines: string[] = [`# Daily Summary ${summary.id}`, ""];
 
+  const resolvedDate = resolveDailyDate(summary);
   lines.push(formatTimeZoneHeader(timeZone));
-  lines.push(`- date: ${formatDateValue(summary.date, timeZone, nowMs)}`);
-  lines.push(
-    `- date_time: ${formatDateValue(summary.date_time, timeZone, nowMs)}`
-  );
-  lines.push(
-    `- created_at: ${formatDateValue(summary.created_at, timeZone, nowMs)}`
-  );
-  lines.push(
-    `- conversations_count: ${summary.conversations_count ?? "n/a"}`
-  );
+  lines.push(`- date: ${formatDateValue(resolvedDate, timeZone, nowMs)}`);
   lines.push("");
 
   lines.push("## Short Summary", "");
-  lines.push(summary.short_summary.trim() || "(empty)", "");
+  lines.push(...formatQuotedText(summary.short_summary), "");
 
   if (summary.summary) {
     lines.push("## Summary", "");
@@ -360,9 +346,8 @@ function formatDailyDetailDocument(
       } else {
         lines.push("- primary_location: (none)");
       }
-      lines.push(
-        `- short_summary: ${conversation.short_summary?.trim() || "(empty)"}`
-      );
+      lines.push("- short_summary:");
+      lines.push(...formatQuotedText(conversation.short_summary ?? ""));
       lines.push("");
     }
   } else {
@@ -377,4 +362,24 @@ function normalizeRecord(payload: unknown): Record<string, unknown> {
     return payload as Record<string, unknown>;
   }
   return { value: payload };
+}
+
+function resolveDailyDate(
+  summary: Pick<DailySummary, "date" | "date_time" | "created_at">
+): number | string | null {
+  if (summary.date) {
+    return summary.date;
+  }
+  if (summary.date_time !== null) {
+    return summary.date_time;
+  }
+  return summary.created_at ?? null;
+}
+
+function formatQuotedText(text: string): string[] {
+  const normalized = text.trim();
+  if (!normalized) {
+    return ["> (empty)"];
+  }
+  return normalized.split(/\r?\n/).map((line) => `> ${line}`);
 }
