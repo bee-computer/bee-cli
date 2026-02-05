@@ -239,19 +239,13 @@ function formatConversationRecordMarkdown(options: {
 }): string {
   const { summary } = options;
   const base = formatRecordMarkdown(options).trimEnd();
-  return `${base}\n- summary: ${summary}`;
+  return `${base}\n\nsummary: ${summary}`;
 }
 
 function normalizeConversationRecord(
   conversation: SearchResultItem
 ): { record: Record<string, unknown>; summary: string } {
   const record: Record<string, unknown> = { ...conversation };
-  const hadFields = Object.prototype.hasOwnProperty.call(record, "fields");
-  const hasDetailed = Object.prototype.hasOwnProperty.call(
-    record,
-    "detailed_summary"
-  );
-  const hasShort = Object.prototype.hasOwnProperty.call(record, "short_summary");
   const detailedRaw = record["detailed_summary"];
   const shortRaw = record["short_summary"];
   const summaryRaw = record["summary"];
@@ -259,23 +253,13 @@ function normalizeConversationRecord(
   delete record["detailed_summary"];
   delete record["short_summary"];
   delete record["summary"];
+  delete record["fields"];
 
   const detailedText = normalizeSummaryText(detailedRaw);
   const shortText = normalizeSummaryText(shortRaw);
   const summaryText = normalizeSummaryText(summaryRaw);
   const summary =
     detailedText ?? shortText ?? summaryText ?? "(no explicit answer)";
-
-  const fields = normalizeFieldsRecord(record["fields"]);
-  if (hasDetailed) {
-    fields["detailed_summary"] = detailedRaw;
-  }
-  if (hasShort) {
-    fields["short_summary"] = shortRaw;
-  }
-  if (hadFields || hasDetailed || hasShort) {
-    record["fields"] = fields;
-  }
 
   return { record, summary };
 }
@@ -286,16 +270,6 @@ function normalizeSummaryText(value: unknown): string | null {
   }
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : null;
-}
-
-function normalizeFieldsRecord(value: unknown): Record<string, unknown> {
-  if (value && typeof value === "object" && !Array.isArray(value)) {
-    return { ...(value as Record<string, unknown>) };
-  }
-  if (value !== undefined) {
-    return { value };
-  }
-  return {};
 }
 
 function parseSearchResults(
