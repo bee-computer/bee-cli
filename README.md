@@ -5,13 +5,9 @@
   CLI Client for Bee AI
 </h1>
 
-<h4 align="center">
-Connect Bee AI data with your tools
-</h4>
-
 <div align="center">
 
-[🌐 **Website**](https://bee.computer) • [📱 **iOS App**](https://apps.apple.com/us/app/bee-your-personal-ai/id6480349491) • [🤖 **Android App**](#) (Coming Soon) • [🧩 **Agent Skill**](https://github.com/bee-computer/bee-skill)
+[🌐 **Website**](https://bee.computer) • [📱 **iOS App**](https://apps.apple.com/us/app/bee-your-personal-ai/id6480349491) • 🤖 **Android Coming Soon** • [🧩 **Agent Skill**](https://github.com/bee-computer/bee-skill)
 
 </div>
 
