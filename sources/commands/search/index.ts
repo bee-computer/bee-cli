@@ -83,7 +83,10 @@ async function handleSearch(
     lines.push("- (none)", "");
   } else {
     const timeZone = resolveTimeZone(payload.timezone);
-    for (const result of payload.results) {
+    for (const [index, result] of payload.results.entries()) {
+      if (index > 0) {
+        lines.push("-----", "");
+      }
       if (options.neural) {
         const { record, summary } = normalizeConversationRecord(result);
         lines.push(
