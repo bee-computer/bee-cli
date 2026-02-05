@@ -50,7 +50,7 @@ async function handleSearch(
 
   const endpoint = options.neural
     ? "/v1/search/conversations/neural"
-    : "/v1/search";
+    : "/v1/search/conversations";
   const data = await requestClientJson(context, endpoint, {
     method: "POST",
     json: body,
