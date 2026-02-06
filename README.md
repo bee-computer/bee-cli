@@ -26,7 +26,7 @@ Bee is an **encrypted** wearable personal AI device that sits quietly in the bac
 - **Todos** — action items extracted from your conversations
 - **Personal insights** and patterns over time
 
-Bee understands 40+ languages, features 7-day battery life, and works with the iOS app to give you a searchable, AI-powered memory of your life.
+Bee understands 40+ languages, features 14-day battery life, and works with the iOS app to give you a searchable, AI-powered memory of your life.
 
 ## Why Bee CLI?
 
