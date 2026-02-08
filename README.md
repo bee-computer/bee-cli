@@ -14,7 +14,7 @@
 CLI client for [Bee](https://www.bee.computer/) — the wearable AI that captures your conversations and learns about you.
 
 > [!IMPORTANT]
-> To use the CLI, you must have the latest Bee app installed and enable Developer Mode by tapping the app version 10 times in Settings.
+> To use the CLI, you must have the latest Bee app installed and enable Developer Mode by tapping the app version 5 times in Settings.
 
 ## How does it work?
 
