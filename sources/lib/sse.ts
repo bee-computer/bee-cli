@@ -148,14 +148,58 @@ function readStream(
 }
 
 function getStreamIterator(
-  stream: { [Symbol.asyncIterator]?: () => AsyncIterator<unknown> }
+  stream: {
+    on?: (event: string, listener: (...args: unknown[]) => void) => void;
+    [Symbol.asyncIterator]?: () => AsyncIterator<unknown>;
+  }
 ): AsyncIterable<unknown> {
   if (stream[Symbol.asyncIterator]) {
     return stream as AsyncIterable<unknown>;
   }
+
   return {
     async *[Symbol.asyncIterator]() {
-      yield* [];
+      const queue: unknown[] = [];
+      let done = false;
+      let error: unknown | null = null;
+      let notify: (() => void) | null = null;
+
+      stream.on?.("data", (chunk) => {
+        queue.push(chunk);
+        if (notify) {
+          notify();
+          notify = null;
+        }
+      });
+
+      stream.on?.("end", () => {
+        done = true;
+        if (notify) {
+          notify();
+          notify = null;
+        }
+      });
+
+      stream.on?.("error", (err) => {
+        error = err;
+        if (notify) {
+          notify();
+          notify = null;
+        }
+      });
+
+      while (!done || queue.length > 0) {
+        if (error) {
+          throw error;
+        }
+        if (queue.length === 0) {
+          await new Promise<void>((resolve) => {
+            notify = resolve;
+          });
+          continue;
+        }
+        yield queue.shift();
+      }
     },
   };
 }
