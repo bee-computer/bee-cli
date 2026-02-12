@@ -11,7 +11,7 @@ const binaryPath = resolve(process.cwd(), "dist", "bee");
 
 describe("bee cli e2e", () => {
   e2e(
-    "runs against real bee binary",
+    "runs against real bee binary with authenticated profile",
     async () => {
       if (!existsSync(binaryPath)) {
         throw new Error(
@@ -28,10 +28,18 @@ describe("bee cli e2e", () => {
       const status = await bee.run(["status"]);
       expect(status.exitCode).toBe(0);
       expect(status.stdout).toContain("API:");
-      expect(
-        status.stdout.includes("Not logged in.") ||
-          status.stdout.includes("Verified as")
-      ).toBe(true);
+      expect(status.stdout).toContain("Verified as");
+
+      const profile = await bee.api.me<{
+        id?: number;
+        first_name?: string;
+        last_name?: string | null;
+        timezone?: string | null;
+      }>();
+
+      expect(typeof profile).toBe("object");
+      expect(typeof profile?.id).toBe("number");
+      expect(typeof profile?.first_name).toBe("string");
     },
     TIMEOUT_MS
   );
