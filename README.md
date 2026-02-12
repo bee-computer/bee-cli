@@ -53,10 +53,11 @@ Or download the latest release from the releases page or build from source.
 bee <command> [options]
 ```
 
-## Library (Bun)
+## Library (Node)
 
-You can also import a small library wrapper that shells out to the CLI and uses
-the JSON output flags.
+You can also import a small library wrapper that shells out to the `bee` binary
+and uses the JSON output flags. This runs in Node.js. Ensure `bee` is on your
+`PATH`, or pass a custom `command` path when creating the client.
 
 ```ts
 import { createBeeClient } from "@beeai/cli/lib";

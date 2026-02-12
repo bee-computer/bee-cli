@@ -1,4 +1,5 @@
 import type { BeeCliOptions, RunOptions, SpawnOptions } from "@/lib/types";
+import { spawn as nodeSpawn } from "node:child_process";
 
 type RunResult = {
   stdout: string;
@@ -6,10 +7,29 @@ type RunResult = {
   exitCode: number;
 };
 
+type NodeReadable = {
+  on: (event: string, listener: (...args: unknown[]) => void) => void;
+  setEncoding?: (encoding: BufferEncoding) => unknown;
+  [Symbol.asyncIterator]?: () => AsyncIterator<unknown>;
+};
+
+type NodeWritable = {
+  write: (chunk: string) => void;
+  end: () => void;
+};
+
+export type BeeSubprocess = {
+  stdin: NodeWritable | null;
+  stdout: NodeReadable | null;
+  stderr: NodeReadable | null;
+  kill: (signal?: string | number) => void;
+  exited: Promise<number>;
+};
+
 export type BeeCliRunner = {
   run: (args: string[], options?: RunOptions) => Promise<RunResult>;
   runJson: <T = unknown>(args: string[], options?: RunOptions) => Promise<T>;
-  spawn: (args: string[], options?: SpawnOptions) => Bun.Subprocess;
+  spawn: (args: string[], options?: SpawnOptions) => BeeSubprocess;
 };
 
 export function createBeeCliRunner(options: BeeCliOptions = {}): BeeCliRunner {
@@ -26,7 +46,9 @@ export function createBeeCliRunner(options: BeeCliOptions = {}): BeeCliRunner {
 
   function buildEnv(): Record<string, string> {
     const merged: Record<string, string> = {};
-    for (const [key, value] of Object.entries(Bun.env)) {
+    const runtimeEnv =
+      typeof Bun !== "undefined" && Bun.env ? Bun.env : process.env;
+    for (const [key, value] of Object.entries(runtimeEnv)) {
       if (value !== undefined) {
         merged[key] = value;
       }
@@ -46,27 +68,38 @@ export function createBeeCliRunner(options: BeeCliOptions = {}): BeeCliRunner {
     return merged;
   }
 
-  function spawn(args: string[], spawnOptions: SpawnOptions = {}): Bun.Subprocess {
-    const config: Bun.SpawnOptions.SpawnOptions<
-      "pipe" | "inherit" | "ignore",
-      "pipe" | "inherit" | "ignore",
-      "pipe" | "inherit" | "ignore"
-    > = {
+  function spawn(args: string[], spawnOptions: SpawnOptions = {}): BeeSubprocess {
+    const stdio: ("pipe" | "inherit" | "ignore")[] = [
+      spawnOptions.stdin ?? "inherit",
+      spawnOptions.stdout ?? "pipe",
+      spawnOptions.stderr ?? "pipe",
+    ];
+
+    const child = nodeSpawn(command, buildArgs(args), {
+      cwd,
       env: buildEnv(),
-      stdout: spawnOptions.stdout ?? "pipe",
-      stderr: spawnOptions.stderr ?? "pipe",
-      stdin: spawnOptions.stdin ?? "inherit",
+      stdio,
+      signal: spawnOptions.signal,
+    });
+
+    const exited = new Promise<number>((resolve, reject) => {
+      child.once("error", (error) => {
+        reject(error);
+      });
+      child.once("exit", (code) => {
+        resolve(code ?? 1);
+      });
+    });
+
+    return {
+      stdin: child.stdin ?? null,
+      stdout: child.stdout ?? null,
+      stderr: child.stderr ?? null,
+      kill: (signal?: string | number) => {
+        child.kill(signal as never);
+      },
+      exited,
     };
-
-    if (cwd) {
-      config.cwd = cwd;
-    }
-
-    if (spawnOptions.signal) {
-      config.signal = spawnOptions.signal;
-    }
-
-    return Bun.spawn([command, ...buildArgs(args)], config);
   }
 
   async function run(
@@ -87,7 +120,7 @@ export function createBeeCliRunner(options: BeeCliOptions = {}): BeeCliRunner {
 
     if (runOptions.stdin !== undefined) {
       const stdin = proc.stdin;
-      if (!stdin || typeof stdin === "number") {
+      if (!stdin) {
         throw new Error("Failed to open stdin pipe for Bee CLI.");
       }
       stdin.write(runOptions.stdin);
@@ -101,8 +134,11 @@ export function createBeeCliRunner(options: BeeCliOptions = {}): BeeCliRunner {
       ? Promise.resolve("")
       : readStream(proc.stderr);
 
-    const exitCode = await proc.exited;
-    const [stdout, stderr] = await Promise.all([stdoutPromise, stderrPromise]);
+    const [exitCode, stdout, stderr] = await Promise.all([
+      proc.exited,
+      stdoutPromise,
+      stderrPromise,
+    ]);
 
     return { stdout, stderr, exitCode };
   }
@@ -144,10 +180,45 @@ function ensureJsonFlag(args: string[]): string[] {
 }
 
 function readStream(
-  stream: ReadableStream<Uint8Array> | number | null | undefined
+  stream: NodeReadable | ReadableStream<Uint8Array> | null | undefined
 ): Promise<string> {
-  if (!stream || typeof stream === "number") {
+  if (!stream) {
     return Promise.resolve("");
   }
-  return new Response(stream).text();
+  if (isWebReadableStream(stream)) {
+    return new Response(stream).text();
+  }
+  return readNodeStream(stream);
+}
+
+function isWebReadableStream(
+  stream: NodeReadable | ReadableStream<Uint8Array>
+): stream is ReadableStream<Uint8Array> {
+  return typeof (stream as ReadableStream<Uint8Array>).getReader === "function";
+}
+
+function readNodeStream(stream: NodeReadable): Promise<string> {
+  return new Promise((resolve, reject) => {
+    let data = "";
+    if (stream.setEncoding) {
+      stream.setEncoding("utf8");
+    }
+    stream.on("data", (chunk) => {
+      if (typeof chunk === "string") {
+        data += chunk;
+      } else if (Buffer.isBuffer(chunk)) {
+        data += chunk.toString("utf8");
+      } else if (chunk instanceof Uint8Array) {
+        data += new TextDecoder().decode(chunk);
+      } else {
+        data += String(chunk);
+      }
+    });
+    stream.on("error", (error) => {
+      reject(error);
+    });
+    stream.on("end", () => {
+      resolve(data);
+    });
+  });
 }

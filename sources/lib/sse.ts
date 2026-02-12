@@ -1,4 +1,4 @@
-import type { BeeCliRunner } from "@/lib/runner";
+import type { BeeCliRunner, BeeSubprocess } from "@/lib/runner";
 
 type JsonSseOptions = {
   types?: string[];
@@ -13,7 +13,7 @@ export type JsonSseEvent<T = unknown> = {
 export type JsonSseStream<T = unknown> = {
   events: AsyncIterable<JsonSseEvent<T>>;
   close: () => void;
-  process: Bun.Subprocess;
+  process: BeeSubprocess;
 };
 
 export type SseApi = {
@@ -55,21 +55,16 @@ export function createJsonSseStream<T = unknown>(
   const stderrPromise = readStream(process.stderr);
 
   const events = (async function* (): AsyncIterable<JsonSseEvent<T>> {
-    if (!process.stdout || typeof process.stdout === "number") {
+    if (!process.stdout) {
       throw new Error("Bee CLI stream has no stdout.");
     }
 
-    const reader = process.stdout.getReader();
-    const decoder = new TextDecoder();
-    let buffer = "";
-
     try {
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) {
-          break;
-        }
-        buffer += decoder.decode(value, { stream: true });
+      const iterator = getStreamIterator(process.stdout);
+      let buffer = "";
+
+      for await (const chunk of iterator) {
+        buffer += chunkToString(chunk);
 
         while (true) {
           const newlineIndex = buffer.indexOf("\n");
@@ -99,7 +94,6 @@ export function createJsonSseStream<T = unknown>(
         );
       }
     } finally {
-      reader.releaseLock();
       try {
         process.kill();
       } catch {
@@ -131,10 +125,50 @@ function parseJsonLine<T>(line: string): JsonSseEvent<T> {
 }
 
 function readStream(
-  stream: ReadableStream<Uint8Array> | number | null | undefined
+  stream: { on: (event: string, listener: (...args: unknown[]) => void) => void; setEncoding?: (encoding: BufferEncoding) => unknown } | null | undefined
 ): Promise<string> {
-  if (!stream || typeof stream === "number") {
+  if (!stream) {
     return Promise.resolve("");
   }
-  return new Response(stream).text();
+  return new Promise((resolve, reject) => {
+    let data = "";
+    if (stream.setEncoding) {
+      stream.setEncoding("utf8");
+    }
+    stream.on("data", (chunk) => {
+      data += chunkToString(chunk);
+    });
+    stream.on("error", (error) => {
+      reject(error);
+    });
+    stream.on("end", () => {
+      resolve(data);
+    });
+  });
+}
+
+function getStreamIterator(
+  stream: { [Symbol.asyncIterator]?: () => AsyncIterator<unknown> }
+): AsyncIterable<unknown> {
+  if (stream[Symbol.asyncIterator]) {
+    return stream as AsyncIterable<unknown>;
+  }
+  return {
+    async *[Symbol.asyncIterator]() {
+      yield* [];
+    },
+  };
+}
+
+function chunkToString(chunk: unknown): string {
+  if (typeof chunk === "string") {
+    return chunk;
+  }
+  if (Buffer.isBuffer(chunk)) {
+    return chunk.toString("utf8");
+  }
+  if (chunk instanceof Uint8Array) {
+    return new TextDecoder().decode(chunk);
+  }
+  return String(chunk);
 }

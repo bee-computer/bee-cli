@@ -16,7 +16,7 @@ export type {
   JsonSseStream,
   SseApi,
 } from "@/lib/sse";
-export type { BeeCliRunner } from "@/lib/runner";
+export type { BeeCliRunner, BeeSubprocess } from "@/lib/runner";
 
 export type BeeClient = {
   auth: AuthApi;
