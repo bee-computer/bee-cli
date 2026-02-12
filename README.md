@@ -53,6 +53,23 @@ Or download the latest release from the releases page or build from source.
 bee <command> [options]
 ```
 
+## Library (Bun)
+
+You can also import a small library wrapper that shells out to the CLI and uses
+the JSON output flags.
+
+```ts
+import { createBeeClient } from "@beeai/cli/lib";
+
+const bee = createBeeClient();
+const profile = await bee.api.me();
+
+const stream = bee.sse.streamJson({ types: ["new-utterance"] });
+for await (const event of stream.events) {
+  console.log(event.data);
+}
+```
+
 ## Commands
 
 By default, data commands return markdown. Use `--json` to print raw JSON.

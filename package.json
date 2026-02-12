@@ -11,9 +11,13 @@
   "bin": {
     "bee": "bin/bee.js"
   },
+  "exports": {
+    "./lib": "./sources/lib/index.ts"
+  },
   "files": [
     "bin/bee.js",
     "dist/platforms",
+    "sources/lib",
     "scripts/postinstall.js",
     "README.md",
     "LICENSE"

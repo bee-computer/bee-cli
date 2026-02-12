@@ -1,0 +1,140 @@
+import type { BeeCliRunner } from "@/lib/runner";
+
+type JsonSseOptions = {
+  types?: string[];
+  signal?: AbortSignal;
+};
+
+export type JsonSseEvent<T = unknown> = {
+  data: T;
+  raw: string;
+};
+
+export type JsonSseStream<T = unknown> = {
+  events: AsyncIterable<JsonSseEvent<T>>;
+  close: () => void;
+  process: Bun.Subprocess;
+};
+
+export type SseApi = {
+  streamJson: <T = unknown>(options?: JsonSseOptions) => JsonSseStream<T>;
+};
+
+export function createSseApi(runner: BeeCliRunner): SseApi {
+  return {
+    streamJson: <T = unknown>(options?: JsonSseOptions) =>
+      createJsonSseStream<T>(runner, options),
+  };
+}
+
+export function createJsonSseStream<T = unknown>(
+  runner: BeeCliRunner,
+  options: JsonSseOptions = {}
+): JsonSseStream<T> {
+  const args = ["stream", "--json"];
+  if (options.types && options.types.length > 0) {
+    args.push("--types", options.types.join(","));
+  }
+
+  const spawnOptions: {
+    stdout: "pipe";
+    stderr: "pipe";
+    stdin: "ignore";
+    signal?: AbortSignal;
+  } = {
+    stdout: "pipe",
+    stderr: "pipe",
+    stdin: "ignore",
+  };
+  if (options.signal) {
+    spawnOptions.signal = options.signal;
+  }
+
+  const process = runner.spawn(args, spawnOptions);
+
+  const stderrPromise = readStream(process.stderr);
+
+  const events = (async function* (): AsyncIterable<JsonSseEvent<T>> {
+    if (!process.stdout || typeof process.stdout === "number") {
+      throw new Error("Bee CLI stream has no stdout.");
+    }
+
+    const reader = process.stdout.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) {
+          break;
+        }
+        buffer += decoder.decode(value, { stream: true });
+
+        while (true) {
+          const newlineIndex = buffer.indexOf("\n");
+          if (newlineIndex === -1) {
+            break;
+          }
+          const line = buffer.slice(0, newlineIndex);
+          buffer = buffer.slice(newlineIndex + 1);
+          const trimmed = line.trim();
+          if (!trimmed) {
+            continue;
+          }
+          yield parseJsonLine<T>(trimmed);
+        }
+      }
+
+      const remaining = buffer.trim();
+      if (remaining) {
+        yield parseJsonLine<T>(remaining);
+      }
+
+      const exitCode = await process.exited;
+      if (exitCode !== 0) {
+        const stderr = (await stderrPromise).trim();
+        throw new Error(
+          stderr || `Bee CLI stream exited with code ${exitCode}.`
+        );
+      }
+    } finally {
+      reader.releaseLock();
+      try {
+        process.kill();
+      } catch {
+        // Ignore already-exited processes.
+      }
+    }
+  })();
+
+  const close = () => {
+    try {
+      process.kill();
+    } catch {
+      // Ignore already-exited processes.
+    }
+  };
+
+  return { events, close, process };
+}
+
+function parseJsonLine<T>(line: string): JsonSseEvent<T> {
+  try {
+    const data = JSON.parse(line) as T;
+    return { data, raw: line };
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : "Unknown JSON parse error";
+    throw new Error(`Invalid JSON from bee stream: ${message}`);
+  }
+}
+
+function readStream(
+  stream: ReadableStream<Uint8Array> | number | null | undefined
+): Promise<string> {
+  if (!stream || typeof stream === "number") {
+    return Promise.resolve("");
+  }
+  return new Response(stream).text();
+}
