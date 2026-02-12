@@ -327,7 +327,7 @@ async function printWelcomeMessage(
   console.log("Welcome to Bee AI!");
   console.log("");
   console.log("NOTE: To use the CLI, you must have the latest Bee app installed");
-  console.log("and enable Developer Mode by tapping the app version 10 times in Settings.");
+  console.log("and enable Developer Mode by tapping the app version 5 times in Settings.");
   console.log("");
 
   if (status === "resumed") {
