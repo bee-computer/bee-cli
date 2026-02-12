@@ -1,6 +1,6 @@
 {
   "name": "@beeai/cli",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "CLI client for bee.computer",
   "repository": {
     "type": "git",
