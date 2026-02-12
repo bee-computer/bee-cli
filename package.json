@@ -12,21 +12,25 @@
     "bee": "bin/bee.js"
   },
   "exports": {
-    "./lib": "./sources/lib/index.ts"
+    "./lib": {
+      "types": "./dist/lib/index.d.ts",
+      "import": "./dist/lib/index.js"
+    }
   },
   "files": [
     "bin/bee.js",
+    "dist/lib",
     "dist/platforms",
-    "sources/lib",
     "scripts/postinstall.js",
     "README.md",
     "LICENSE"
   ],
   "scripts": {
     "build": "bun build ./sources/main.ts --compile --outfile ./dist/bee",
+    "build:lib": "bash ./scripts/build-lib.sh",
     "build:all": "bash ./scripts/build-all.sh",
     "dev": "bun ./sources/main.ts",
-    "prepack": "bun run build:all",
+    "prepack": "bun run build:lib && bun run build:all",
     "postinstall": "node ./scripts/postinstall.js",
     "release": "bash ./scripts/release.sh",
     "typecheck": "tsc --noEmit"

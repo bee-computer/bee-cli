@@ -1,22 +1,22 @@
-import type { BeeCliOptions } from "@/lib/types";
-import type { AuthApi } from "@/lib/auth";
-import type { DataApi } from "@/lib/api";
-import type { SseApi } from "@/lib/sse";
-import type { BeeCliRunner } from "@/lib/runner";
-import { createAuthApi } from "@/lib/auth";
-import { createDataApi } from "@/lib/api";
-import { createBeeCliRunner } from "@/lib/runner";
-import { createSseApi, createJsonSseStream } from "@/lib/sse";
+import type { BeeCliOptions } from "./types";
+import type { AuthApi } from "./auth";
+import type { DataApi } from "./api";
+import type { SseApi } from "./sse";
+import type { BeeCliRunner } from "./runner";
+import { createAuthApi } from "./auth";
+import { createDataApi } from "./api";
+import { createBeeCliRunner } from "./runner";
+import { createSseApi, createJsonSseStream } from "./sse";
 
-export type { BeeCliOptions, BeeEnvironment } from "@/lib/types";
-export type { AuthApi } from "@/lib/auth";
-export type { DataApi } from "@/lib/api";
+export type { BeeCliOptions, BeeEnvironment } from "./types";
+export type { AuthApi } from "./auth";
+export type { DataApi } from "./api";
 export type {
   JsonSseEvent,
   JsonSseStream,
   SseApi,
-} from "@/lib/sse";
-export type { BeeCliRunner, BeeSubprocess } from "@/lib/runner";
+} from "./sse";
+export type { BeeCliRunner, BeeSubprocess } from "./runner";
 
 export type BeeClient = {
   auth: AuthApi;

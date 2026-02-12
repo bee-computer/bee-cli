@@ -1,11 +1,9 @@
-import type { Environment } from "@/environment";
-
-export type BeeEnvironment = Environment;
+export type BeeEnvironment = "prod" | "staging";
 
 export type BeeCliOptions = {
   command?: string;
   baseArgs?: string[];
-  environment?: Environment;
+  environment?: BeeEnvironment;
   cwd?: string;
   env?: Record<string, string | undefined>;
 };

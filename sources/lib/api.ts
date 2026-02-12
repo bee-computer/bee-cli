@@ -1,4 +1,4 @@
-import type { BeeCliRunner } from "@/lib/runner";
+import type { BeeCliRunner } from "./runner";
 
 type ListOptions = {
   limit?: number;
