@@ -92,4 +92,23 @@ describe("lib integration", () => {
     },
     TEST_TIMEOUT_MS
   );
+
+  it(
+    "sse stream skips malformed and non-json lines",
+    async () => {
+      const runner = createNodeRunner(
+        'console.log("event: connected"); console.log("data: {\\"id\\":1}"); console.log("not-json"); console.log("{\\"id\\":2}"); console.log("data: [DONE]");'
+      );
+
+      const stream = createJsonSseStream<{ id: number }>(runner);
+      const received: Array<{ id: number }> = [];
+
+      for await (const event of stream.events) {
+        received.push(event.data);
+      }
+
+      expect(received).toEqual([{ id: 1 }, { id: 2 }]);
+    },
+    TEST_TIMEOUT_MS
+  );
 });

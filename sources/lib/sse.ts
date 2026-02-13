@@ -77,13 +77,19 @@ export function createJsonSseStream<T = unknown>(
           if (!trimmed) {
             continue;
           }
-          yield parseJsonLine<T>(trimmed);
+          const parsed = tryParseJsonLine<T>(trimmed);
+          if (parsed) {
+            yield parsed;
+          }
         }
       }
 
       const remaining = buffer.trim();
       if (remaining) {
-        yield parseJsonLine<T>(remaining);
+        const parsed = tryParseJsonLine<T>(remaining);
+        if (parsed) {
+          yield parsed;
+        }
       }
 
       const exitCode = await process.exited;
@@ -113,15 +119,35 @@ export function createJsonSseStream<T = unknown>(
   return { events, close, process };
 }
 
-function parseJsonLine<T>(line: string): JsonSseEvent<T> {
-  try {
-    const data = JSON.parse(line) as T;
-    return { data, raw: line };
-  } catch (error) {
-    const message =
-      error instanceof Error ? error.message : "Unknown JSON parse error";
-    throw new Error(`Invalid JSON from bee stream: ${message}`);
+function tryParseJsonLine<T>(line: string): JsonSseEvent<T> | null {
+  const payload = normalizeJsonPayload(line);
+  if (payload === null) {
+    return null;
   }
+
+  try {
+    const data = JSON.parse(payload) as T;
+    return { data, raw: line };
+  } catch {
+    return null;
+  }
+}
+
+function normalizeJsonPayload(line: string): string | null {
+  if (line.startsWith(":")) {
+    return null;
+  }
+  if (line.startsWith("event:") || line.startsWith("id:")) {
+    return null;
+  }
+  if (line.startsWith("data:")) {
+    const payload = line.slice("data:".length).trimStart();
+    if (!payload || payload === "[DONE]") {
+      return null;
+    }
+    return payload;
+  }
+  return line;
 }
 
 function readStream(
