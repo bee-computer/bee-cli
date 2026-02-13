@@ -15,3 +15,8 @@ bun build "$ENTRY" \
   --outfile "$DIST_LIB/index.js"
 
 tsc -p "$ROOT_DIR/tsconfig.lib.json"
+
+for declaration_file in "$DIST_LIB"/*.d.ts; do
+  # Make declaration specifiers NodeNext-friendly for published ESM types.
+  perl -pi -e 's/(from\s+"\.\/[^".]+)"/$1.js"/g; s/(from\s+'\''\.\/[^'\''.]+)'\''/$1.js'\''/g' "$declaration_file"
+done

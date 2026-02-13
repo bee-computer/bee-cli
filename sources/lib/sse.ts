@@ -1,4 +1,4 @@
-import type { BeeCliRunner, BeeSubprocess } from "./runner";
+import type { BeeCliRunner, BeeSubprocess } from "./runner.js";
 
 type JsonSseOptions = {
   types?: string[];

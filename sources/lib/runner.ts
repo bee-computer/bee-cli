@@ -1,4 +1,4 @@
-import type { BeeCliOptions, RunOptions, SpawnOptions } from "./types";
+import type { BeeCliOptions, RunOptions, SpawnOptions } from "./types.js";
 import { spawn as nodeSpawn } from "node:child_process";
 
 type RunResult = {
