@@ -116,10 +116,10 @@ async function fetchRecentConversationSummaries(
     const payload = parseConversationList(data);
     timezone = timezone ?? payload.timezone;
 
-    let oldestCreatedAt = Number.POSITIVE_INFINITY;
+    let oldestStartTime = Number.POSITIVE_INFINITY;
     for (const conversation of payload.conversations) {
-      oldestCreatedAt = Math.min(oldestCreatedAt, normalizeEpochMs(conversation.created_at));
       const timestamp = resolveConversationTime(conversation);
+      oldestStartTime = Math.min(oldestStartTime, timestamp);
       if (timestamp >= sinceMs) {
         conversations.push(conversation);
       }
@@ -129,7 +129,7 @@ async function fetchRecentConversationSummaries(
       break;
     }
 
-    if (oldestCreatedAt < sinceMs) {
+    if (oldestStartTime < sinceMs) {
       break;
     }
 
