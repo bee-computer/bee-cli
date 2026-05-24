@@ -8,6 +8,7 @@ const USAGE =
 
 const DEFAULT_OUTPUT_DIR = "bee-sync";
 const PAGE_SIZE = 100;
+const BATCH_DETAIL_SIZE = 100;
 const SYNC_CONCURRENCY = 4;
 const FALLBACK_TIMEZONE = "America/Los_Angeles";
 const DEFAULT_TIMEZONE = resolveDefaultTimezone();
@@ -389,8 +390,22 @@ async function syncAll(
     syncPromises.push(syncConversations(context, options.outputDir, task));
   }
 
-  await Promise.all(syncPromises);
+  const results = await Promise.allSettled(syncPromises);
   progress.finish();
+
+  const errors = results
+    .filter((result): result is PromiseRejectedResult => result.status === "rejected")
+    .map((result) =>
+      result.reason instanceof Error ? result.reason.message : String(result.reason)
+    );
+
+  if (errors.length > 0) {
+    process.stderr.write(`\nSync completed with ${errors.length} error(s):\n`);
+    for (const message of errors) {
+      process.stderr.write(`  - ${message}\n`);
+    }
+    process.exitCode = 1;
+  }
 }
 
 async function syncFacts(
@@ -429,17 +444,36 @@ async function syncDaily(
   );
   task.setTotal(sortedDaily.length);
 
+  const failures: Array<{ id: number; error: string }> = [];
   await runWithConcurrency(sortedDaily, SYNC_CONCURRENCY, async (summary) => {
-    const detail = await fetchDailySummary(context, summary.id);
-    const folderName = resolveDailyFolderName(detail);
-    const dayDir = path.join(dailyDir, folderName);
-    await mkdir(dayDir, { recursive: true });
-    const markdown = formatDailySummaryMarkdown(detail);
-    await writeFile(path.join(dayDir, "summary.md"), markdown, "utf8");
+    try {
+      const detail = await fetchDailySummary(context, summary.id);
+      const folderName = resolveDailyFolderName(detail);
+      const dayDir = path.join(dailyDir, folderName);
+      await mkdir(dayDir, { recursive: true });
+      const markdown = formatDailySummaryMarkdown(detail);
+      await writeFile(path.join(dayDir, "summary.md"), markdown, "utf8");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      failures.push({ id: summary.id, error: message });
+    }
     task.advance(1);
   });
 
-  task.setLabel("daily done");
+  if (failures.length > 0) {
+    task.setLabel(`daily done (${failures.length} failed)`);
+    process.stderr.write(
+      `Warning: ${failures.length} daily summary(s) failed to sync:\n`
+    );
+    for (const failure of failures.slice(0, 10)) {
+      process.stderr.write(`  - daily ${failure.id}: ${failure.error}\n`);
+    }
+    if (failures.length > 10) {
+      process.stderr.write(`  ... and ${failures.length - 10} more\n`);
+    }
+  } else {
+    task.setLabel("daily done");
+  }
   task.complete();
 }
 
@@ -457,21 +491,74 @@ async function syncConversations(
   );
   task.setTotal(sortedConversations.length);
 
-  await runWithConcurrency(
-    sortedConversations,
-    SYNC_CONCURRENCY,
-    async (conversation) => {
-      const detail = await fetchConversation(context, conversation.id);
-      const dateFolder = resolveConversationFolderName(detail);
-      const dayDir = path.join(conversationsDir, dateFolder);
-      await mkdir(dayDir, { recursive: true });
-      const markdown = formatConversationMarkdown(detail);
-      await writeFile(path.join(dayDir, `${conversation.id}.md`), markdown, "utf8");
-      task.advance(1);
-    }
-  );
+  const failures: Array<{ id: number; error: string }> = [];
+  const chunks = chunkArray(sortedConversations, BATCH_DETAIL_SIZE);
 
-  task.setLabel("conversations done");
+  for (const chunk of chunks) {
+    const chunkIds = chunk.map((conversation) => conversation.id);
+    let details: ConversationDetail[] | null = null;
+
+    try {
+      details = await fetchConversationsBatch(context, chunkIds);
+    } catch {
+      details = null;
+    }
+
+    if (details) {
+      const detailById = new Map(details.map((detail) => [detail.id, detail]));
+      for (const conversation of chunk) {
+        const detail = detailById.get(conversation.id);
+        if (detail) {
+          try {
+            const dateFolder = resolveConversationFolderName(detail);
+            const dayDir = path.join(conversationsDir, dateFolder);
+            await mkdir(dayDir, { recursive: true });
+            const markdown = formatConversationMarkdown(detail);
+            await writeFile(path.join(dayDir, `${conversation.id}.md`), markdown, "utf8");
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            failures.push({ id: conversation.id, error: message });
+          }
+        } else {
+          failures.push({
+            id: conversation.id,
+            error: "Missing from batch response",
+          });
+        }
+        task.advance(1);
+      }
+    } else {
+      await runWithConcurrency(chunk, SYNC_CONCURRENCY, async (conversation) => {
+        try {
+          const detail = await fetchConversation(context, conversation.id);
+          const dateFolder = resolveConversationFolderName(detail);
+          const dayDir = path.join(conversationsDir, dateFolder);
+          await mkdir(dayDir, { recursive: true });
+          const markdown = formatConversationMarkdown(detail);
+          await writeFile(path.join(dayDir, `${conversation.id}.md`), markdown, "utf8");
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          failures.push({ id: conversation.id, error: message });
+        }
+        task.advance(1);
+      });
+    }
+  }
+
+  if (failures.length > 0) {
+    task.setLabel(`conversations done (${failures.length} failed)`);
+    process.stderr.write(
+      `Warning: ${failures.length} conversation(s) failed to sync:\n`
+    );
+    for (const failure of failures.slice(0, 10)) {
+      process.stderr.write(`  - conversation ${failure.id}: ${failure.error}\n`);
+    }
+    if (failures.length > 10) {
+      process.stderr.write(`  ... and ${failures.length - 10} more\n`);
+    }
+  } else {
+    task.setLabel("conversations done");
+  }
   task.complete();
 }
 
@@ -627,6 +714,17 @@ async function fetchConversation(
   });
   const payload = parseConversationDetail(data);
   return payload.conversation;
+}
+
+async function fetchConversationsBatch(
+  context: CommandContext,
+  ids: number[]
+): Promise<ConversationDetail[]> {
+  const data = await requestClientJson(context, "/v1/conversations/batch", {
+    method: "POST",
+    json: { ids },
+  });
+  return parseConversationBatchResponse(data);
 }
 
 function resolveDailyFolderName(summary: DailySummary): string {
@@ -985,6 +1083,25 @@ function parseConversationDetail(
     throw new Error("Invalid conversation response.");
   }
   return { conversation: data.conversation };
+}
+
+function parseConversationBatchResponse(payload: unknown): ConversationDetail[] {
+  if (!payload || typeof payload !== "object") {
+    throw new Error("Invalid batch response.");
+  }
+  const data = payload as { conversations?: ConversationDetail[] };
+  if (!Array.isArray(data.conversations)) {
+    throw new Error("Invalid batch response.");
+  }
+  return data.conversations;
+}
+
+function chunkArray<T>(items: readonly T[], size: number): T[][] {
+  const chunks: T[][] = [];
+  for (let index = 0; index < items.length; index += size) {
+    chunks.push(items.slice(index, index + size) as T[]);
+  }
+  return chunks;
 }
 
 async function runWithConcurrency<T>(
