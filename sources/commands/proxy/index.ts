@@ -6,14 +6,22 @@ import {
 } from "@/utils/proxyAddress";
 import { existsSync, unlinkSync } from "node:fs";
 
-const USAGE = "bee proxy [--port N]\nbee proxy --socket [path]";
+const USAGE = "bee proxy [--port N] [--idle-timeout SECONDS]\nbee proxy --socket [path] [--idle-timeout SECONDS]";
 const DEFAULT_PORT = 8787;
+const DEFAULT_IDLE_TIMEOUT_SECONDS = 120;
 const MAX_PORT_ATTEMPTS = 50;
 
 type ProxyOptions = {
   port?: number;
   socketPath?: string;
+  idleTimeoutSeconds?: number;
 };
+
+type ProxyFetch = (
+  this: Bun.Server<undefined>,
+  request: Request,
+  server: Bun.Server<undefined>
+) => Promise<Response>;
 
 const HOP_BY_HOP_HEADERS = new Set([
   "connection",
@@ -39,6 +47,7 @@ export const proxyCommand: Command = {
 export function parseProxyArgs(args: readonly string[]): ProxyOptions {
   let port: number | undefined;
   let socketPath: string | undefined;
+  let idleTimeoutSeconds: number | undefined;
   const positionals: string[] = [];
 
   for (let i = 0; i < args.length; i += 1) {
@@ -72,6 +81,20 @@ export function parseProxyArgs(args: readonly string[]): ProxyOptions {
       continue;
     }
 
+    if (arg === "--idle-timeout") {
+      const value = args[i + 1];
+      if (value === undefined) {
+        throw new Error("--idle-timeout requires a value");
+      }
+      const parsed = Number(value);
+      if (!Number.isInteger(parsed) || parsed < 0) {
+        throw new Error("--idle-timeout must be a non-negative integer");
+      }
+      idleTimeoutSeconds = parsed;
+      i += 1;
+      continue;
+    }
+
     if (arg.startsWith("-")) {
       throw new Error(`Unknown option: ${arg}`);
     }
@@ -94,6 +117,9 @@ export function parseProxyArgs(args: readonly string[]): ProxyOptions {
   if (socketPath !== undefined) {
     options.socketPath = socketPath;
   }
+  if (idleTimeoutSeconds !== undefined) {
+    options.idleTimeoutSeconds = idleTimeoutSeconds;
+  }
   return options;
 }
 
@@ -111,62 +137,71 @@ export async function startProxy(
     unlinkSync(socketPath);
   }
 
-  const listenOptions = socketPath
-    ? { unix: socketPath }
-    : {
-      hostname: "127.0.0.1",
-      port: await pickPort(options.port),
+  const idleTimeout = options.idleTimeoutSeconds ?? DEFAULT_IDLE_TIMEOUT_SECONDS;
+
+  const fetchProxyRequest: ProxyFetch = async (request, server) => {
+    server.timeout(request, idleTimeout);
+
+    const url = new URL(request.url);
+    if (!url.pathname.startsWith("/v1")) {
+      return new Response("Not Found", { status: 404 });
+    }
+
+    const headers = new Headers(request.headers);
+    for (const header of HOP_BY_HOP_HEADERS) {
+      headers.delete(header);
+    }
+    headers.delete("host");
+    headers.delete("content-length");
+    headers.set("authorization", `Bearer ${token}`);
+
+    const init: RequestInit = {
+      method: request.method,
+      headers,
     };
+    if (request.method !== "GET" && request.method !== "HEAD") {
+      init.body = request.body;
+    }
 
-  const server = Bun.serve({
-    ...listenOptions,
-    fetch: async (request) => {
-      const url = new URL(request.url);
-      if (!url.pathname.startsWith("/v1")) {
-        return new Response("Not Found", { status: 404 });
-      }
+    const response = await context.client.fetch(
+      `${url.pathname}${url.search}`,
+      init
+    );
 
-      const headers = new Headers(request.headers);
-      for (const header of HOP_BY_HOP_HEADERS) {
-        headers.delete(header);
-      }
-      headers.delete("host");
-      headers.delete("content-length");
-      headers.set("authorization", `Bearer ${token}`);
+    const responseHeaders = new Headers(response.headers);
+    for (const header of HOP_BY_HOP_HEADERS) {
+      responseHeaders.delete(header);
+    }
 
-      const init: RequestInit = {
-        method: request.method,
-        headers,
-      };
-      if (request.method !== "GET" && request.method !== "HEAD") {
-        init.body = request.body;
-      }
+    return new Response(response.body, {
+      status: response.status,
+      headers: responseHeaders,
+    });
+  };
 
-      const response = await context.client.fetch(
-        `${url.pathname}${url.search}`,
-        init
-      );
+  let server: ReturnType<typeof Bun.serve>;
+  let listenAddress: string;
 
-      const responseHeaders = new Headers(response.headers);
-      for (const header of HOP_BY_HOP_HEADERS) {
-        responseHeaders.delete(header);
-      }
-
-      return new Response(response.body, {
-        status: response.status,
-        headers: responseHeaders,
-      });
-    },
-  });
+  if (socketPath) {
+    server = Bun.serve({
+      unix: socketPath,
+      fetch: fetchProxyRequest,
+    });
+    listenAddress = `unix://${socketPath}`;
+  } else {
+    const hostname = "127.0.0.1";
+    const port = await pickPort(options.port);
+    server = Bun.serve({
+      hostname,
+      port,
+      idleTimeout,
+      fetch: fetchProxyRequest,
+    });
+    listenAddress = `http://${hostname}:${port}`;
+  }
 
   const baseUrl = context.client.baseUrl;
-  if (socketPath) {
-    console.log(`Proxy listening on unix://${socketPath}`);
-  } else {
-    const hostname = (listenOptions as { hostname: string }).hostname;
-    const port = (listenOptions as { port: number }).port;
-    console.log(`Proxy listening on http://${hostname}:${port}`);
-  }
+  console.log(`Proxy listening on ${listenAddress}`);
   console.log(`Forwarding /v1 requests to ${baseUrl}`);
   console.log("Press Ctrl+C to stop.");
 
