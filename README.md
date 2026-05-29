@@ -120,7 +120,7 @@ By default, data commands return markdown. Use `--json` to print raw JSON.
 
 - `sync` - Export your Bee data to markdown files for AI agents. Options: `--output <dir>`, `--recent-days N`, `--only <facts|todos|daily|conversations>`.
 
-- `proxy` - Start a local Bee API proxy. Options: `--port N`, `--socket [path]`.
+- `proxy` - Start a local Bee API proxy. Options: `--port N`, `--socket [path]`, `--idle-timeout SECONDS`.
 
 - `ping` - Run a quick connectivity check. Use `--count N` to repeat.
 
@@ -148,13 +148,17 @@ This saves proxy config to `~/.bee/proxy-{env}.json`. When proxy config exists, 
 # TCP listener (default auto-picks from 8787)
 bee proxy
 bee proxy --port 8787
+bee proxy --idle-timeout 300
 
 # Unix socket listener (default: ~/.bee/proxy.sock)
 bee proxy --socket
 bee proxy --socket /tmp/bee-proxy.sock
 ```
 
-In socket mode, the CLI removes stale socket files before listening.
+Bee Proxy sets Bun's server idle timeout to 120 seconds by default. Use
+`--idle-timeout SECONDS` to increase it for large exports, or `--idle-timeout 0`
+to disable idle request timeouts. In socket mode, the CLI removes stale socket
+files before listening.
 
 ## Stream Events
 

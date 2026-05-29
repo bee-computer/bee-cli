@@ -48,6 +48,28 @@ describe("proxy command", () => {
     });
   });
 
+  it("parses --idle-timeout", () => {
+    expect(parseProxyArgs(["--port", "9000", "--idle-timeout", "300"])).toEqual({
+      port: 9000,
+      idleTimeoutSeconds: 300,
+    });
+  });
+
+  it("allows --idle-timeout 0 to disable idle request timeouts", () => {
+    expect(parseProxyArgs(["--idle-timeout", "0"])).toEqual({
+      idleTimeoutSeconds: 0,
+    });
+  });
+
+  it("rejects invalid --idle-timeout values", () => {
+    expect(() => parseProxyArgs(["--idle-timeout", "-1"])).toThrow(
+      "--idle-timeout must be a non-negative integer"
+    );
+    expect(() => parseProxyArgs(["--idle-timeout"])).toThrow(
+      "--idle-timeout requires a value"
+    );
+  });
+
   it("rejects --socket with --port", () => {
     expect(() => parseProxyArgs(["--socket", "/tmp/custom.sock", "--port", "9000"])).toThrow(
       "--port and --socket cannot be used together"
