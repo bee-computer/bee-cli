@@ -1,6 +1,11 @@
 import type { Command, CommandContext } from "@/commands/types";
 import { printJson, requestClientJson } from "@/client/clientApi";
 import {
+  callBeeTextTool,
+  parsePositiveInt,
+  printToolData,
+} from "@/commands/mcpToolOutput";
+import {
   formatDateValue,
   formatTimeZoneHeader,
   parseOutputFlag,
@@ -9,6 +14,7 @@ import {
 
 const USAGE = [
   "bee journals list [--limit N] [--cursor <cursor>] [--json]",
+  "bee journals search --query <text> [--limit N] [--json]",
   "bee journals get <id> [--json]",
 ].join("\n");
 
@@ -26,6 +32,9 @@ export const journalsCommand: Command = {
       case "list":
         await handleList(rest, context);
         return;
+      case "search":
+        await handleSearch(rest, context);
+        return;
       case "get":
         await handleGet(rest, context);
         return;
@@ -34,6 +43,72 @@ export const journalsCommand: Command = {
     }
   },
 };
+
+type SearchOptions = {
+  query: string;
+  limit?: number;
+};
+
+async function handleSearch(
+  args: readonly string[],
+  context: CommandContext
+): Promise<void> {
+  const { format, args: remaining } = parseOutputFlag(args);
+  const options = parseSearchArgs(remaining);
+  const data = await callBeeTextTool(context, "bee_search_voice_notes", {
+    query: options.query,
+    limit: options.limit,
+  });
+  printToolData("Journal Search", data, format);
+}
+
+function parseSearchArgs(args: readonly string[]): SearchOptions {
+  let query: string | undefined;
+  let limit: number | undefined;
+  const positionals: string[] = [];
+
+  for (let i = 0; i < args.length; i += 1) {
+    const arg = args[i];
+    if (arg === undefined) {
+      continue;
+    }
+
+    if (arg === "--query") {
+      const value = args[i + 1];
+      if (value === undefined || value.trim().length === 0) {
+        throw new Error("--query requires a value");
+      }
+      query = value;
+      i += 1;
+      continue;
+    }
+
+    if (arg === "--limit") {
+      limit = parsePositiveInt(args[i + 1], "--limit", 20);
+      i += 1;
+      continue;
+    }
+
+    if (arg.startsWith("-")) {
+      throw new Error(`Unknown option: ${arg}`);
+    }
+
+    positionals.push(arg);
+  }
+
+  if (positionals.length > 0) {
+    throw new Error(`Unexpected arguments: ${positionals.join(" ")}`);
+  }
+  if (!query) {
+    throw new Error("Missing query. Provide --query.");
+  }
+
+  const options: SearchOptions = { query };
+  if (limit !== undefined) {
+    options.limit = limit;
+  }
+  return options;
+}
 
 type ListOptions = {
   limit?: number;

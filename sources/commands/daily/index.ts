@@ -1,5 +1,6 @@
 import type { Command, CommandContext } from "@/commands/types";
 import { printJson, requestClientJson } from "@/client/clientApi";
+import { callBeeTextTool, printToolData } from "@/commands/mcpToolOutput";
 import {
   formatDateValue,
   formatRecordMarkdown,
@@ -11,6 +12,7 @@ import {
 const USAGE = [
   "bee daily list [--limit N] [--cursor CURSOR] [--json]",
   "bee daily get <id> [--json]",
+  "bee daily find <YYYY-MM-DD> [--json]",
 ].join("\n");
 
 export const dailyCommand: Command = {
@@ -30,11 +32,38 @@ export const dailyCommand: Command = {
       case "get":
         await handleGet(rest, context);
         return;
+      case "find":
+        await handleFind(rest, context);
+        return;
       default:
         throw new Error(`Unknown daily subcommand: ${subcommand}`);
     }
   },
 };
+
+async function handleFind(
+  args: readonly string[],
+  context: CommandContext
+): Promise<void> {
+  const { format, args: remaining } = parseOutputFlag(args);
+  const date = parseDateArg(remaining);
+  const data = await callBeeTextTool(context, "bee_get_daily_summary", { date });
+  printToolData("Daily Summary", data, format);
+}
+
+function parseDateArg(args: readonly string[]): string {
+  if (args.length === 0) {
+    throw new Error("Missing date.");
+  }
+  if (args.length > 1) {
+    throw new Error(`Unexpected arguments: ${args.join(" ")}`);
+  }
+  const date = args[0] ?? "";
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    throw new Error("Date must be YYYY-MM-DD.");
+  }
+  return date;
+}
 
 type ListOptions = {
   limit?: number;

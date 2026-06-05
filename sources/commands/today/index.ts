@@ -1,12 +1,13 @@
 import type { Command } from "@/commands/types";
 import { printJson, requestClientJson } from "@/client/clientApi";
+import { callBeeTextTool, printToolData } from "@/commands/mcpToolOutput";
 import {
   formatRecordMarkdown,
   parseOutputFlag,
   resolveTimeZone,
 } from "@/utils/markdown";
 
-const USAGE = "bee today [--json]";
+const USAGE = "bee today [--context] [--json]";
 
 export const todayCommand: Command = {
   name: "today",
@@ -14,8 +15,11 @@ export const todayCommand: Command = {
   usage: USAGE,
   run: async (args, context) => {
     const { format, args: remaining } = parseOutputFlag(args);
-    if (remaining.length > 0) {
-      throw new Error(`Unexpected arguments: ${remaining.join(" ")}`);
+    const options = parseTodayArgs(remaining);
+    if (options.context) {
+      const data = await callBeeTextTool(context, "bee_get_today", {});
+      printToolData("Today", data, format);
+      return;
     }
 
     const data = await requestClientJson(context, "/v1/todayBrief", {
@@ -37,6 +41,32 @@ export const todayCommand: Command = {
     );
   },
 };
+
+type TodayOptions = {
+  context: boolean;
+};
+
+function parseTodayArgs(args: readonly string[]): TodayOptions {
+  let includeContext = false;
+  const positionals: string[] = [];
+
+  for (const arg of args) {
+    if (arg === "--context") {
+      includeContext = true;
+      continue;
+    }
+    if (arg.startsWith("-")) {
+      throw new Error(`Unknown option: ${arg}`);
+    }
+    positionals.push(arg);
+  }
+
+  if (positionals.length > 0) {
+    throw new Error(`Unexpected arguments: ${positionals.join(" ")}`);
+  }
+
+  return { context: includeContext };
+}
 
 function parseTodayTimezone(value: unknown): string | null {
   if (!value || typeof value !== "object") {

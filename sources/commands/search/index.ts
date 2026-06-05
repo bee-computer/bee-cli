@@ -1,5 +1,6 @@
 import type { Command, CommandContext } from "@/commands/types";
 import { printJson, requestClientJson } from "@/client/clientApi";
+import { callBeeTextTool, printToolData } from "@/commands/mcpToolOutput";
 import {
   formatRecordMarkdown,
   parseOutputFlag,
@@ -7,7 +8,7 @@ import {
 } from "@/utils/markdown";
 
 const USAGE =
-  "bee search --query <text> [--limit N] [--since <epochMs>] [--until <epochMs>] [--neural] [--json]";
+  "bee search --query <text> [--limit N] [--since <epochMs>] [--until <epochMs>] [--neural] [--scope conversations|all] [--json]";
 
 export const searchCommand: Command = {
   name: "search",
@@ -26,6 +27,7 @@ type SearchOptions = {
   since?: number;
   until?: number;
   neural: boolean;
+  scope: "conversations" | "all";
 };
 
 async function handleSearch(
@@ -33,6 +35,21 @@ async function handleSearch(
   format: "markdown" | "json",
   context: CommandContext
 ): Promise<void> {
+  if (options.scope === "all") {
+    if (options.neural) {
+      throw new Error("--neural can only be used with --scope conversations.");
+    }
+    if (options.since !== undefined || options.until !== undefined) {
+      throw new Error("--since and --until can only be used with --scope conversations.");
+    }
+    const data = await callBeeTextTool(context, "bee_search", {
+      query: options.query,
+      limit: options.limit,
+    });
+    printToolData("Bee Search", data, format);
+    return;
+  }
+
   const body: { query: string; limit?: number; since?: number; until?: number } =
     {
       query: options.query,
@@ -130,6 +147,7 @@ function parseSearchArgs(args: readonly string[]): SearchOptions {
   let since: number | undefined;
   let until: number | undefined;
   let neural = false;
+  let scope: SearchOptions["scope"] = "conversations";
   const positionals: string[] = [];
 
   for (let i = 0; i < args.length; i += 1) {
@@ -168,6 +186,16 @@ function parseSearchArgs(args: readonly string[]): SearchOptions {
 
     if (arg === "--neural") {
       neural = true;
+      continue;
+    }
+
+    if (arg === "--scope") {
+      const value = args[i + 1];
+      if (value !== "conversations" && value !== "all") {
+        throw new Error("--scope must be conversations or all");
+      }
+      scope = value;
+      i += 1;
       continue;
     }
 
@@ -214,7 +242,7 @@ function parseSearchArgs(args: readonly string[]): SearchOptions {
     throw new Error("Missing query. Provide --query.");
   }
 
-  const options: SearchOptions = { query, neural };
+  const options: SearchOptions = { query, neural, scope };
   if (limit !== undefined) {
     options.limit = limit;
   }

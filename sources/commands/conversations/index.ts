@@ -1,6 +1,11 @@
 import type { Command, CommandContext } from "@/commands/types";
 import { printJson, requestClientJson } from "@/client/clientApi";
 import {
+  callBeeTextTool,
+  parsePositiveInt,
+  printToolData,
+} from "@/commands/mcpToolOutput";
+import {
   formatDateValue,
   formatRecordMarkdown,
   formatTimeZoneHeader,
@@ -11,6 +16,8 @@ import {
 const USAGE = [
   "bee conversations list [--limit N] [--cursor <cursor>] [--json]",
   "bee conversations get <id> [--json]",
+  "bee conversations transcript <id> [--json]",
+  "bee conversations related <id> [--limit N] [--json]",
 ].join("\n");
 
 export const conversationsCommand: Command = {
@@ -30,11 +37,76 @@ export const conversationsCommand: Command = {
       case "get":
         await handleGet(rest, context);
         return;
+      case "transcript":
+        await handleTranscript(rest, context);
+        return;
+      case "related":
+        await handleRelated(rest, context);
+        return;
       default:
         throw new Error(`Unknown conversations subcommand: ${subcommand}`);
     }
   },
 };
+
+async function handleTranscript(
+  args: readonly string[],
+  context: CommandContext
+): Promise<void> {
+  const { format, args: remaining } = parseOutputFlag(args);
+  const id = parseId(remaining);
+  const data = await callBeeTextTool(context, "bee_get_conversation_transcript", { id });
+  printToolData("Conversation Transcript", data, format);
+}
+
+async function handleRelated(
+  args: readonly string[],
+  context: CommandContext
+): Promise<void> {
+  const { format, args: remaining } = parseOutputFlag(args);
+  const options = parseRelatedArgs(remaining);
+  const data = await callBeeTextTool(context, "bee_get_related_conversations", {
+    id: options.id,
+    limit: options.limit,
+  });
+  printToolData("Related Conversations", data, format);
+}
+
+type RelatedOptions = {
+  id: number;
+  limit?: number;
+};
+
+function parseRelatedArgs(args: readonly string[]): RelatedOptions {
+  let limit: number | undefined;
+  const positionals: string[] = [];
+
+  for (let i = 0; i < args.length; i += 1) {
+    const arg = args[i];
+    if (arg === undefined) {
+      continue;
+    }
+
+    if (arg === "--limit") {
+      limit = parsePositiveInt(args[i + 1], "--limit", 10);
+      i += 1;
+      continue;
+    }
+
+    if (arg.startsWith("-")) {
+      throw new Error(`Unknown option: ${arg}`);
+    }
+
+    positionals.push(arg);
+  }
+
+  const id = parseId(positionals);
+  const options: RelatedOptions = { id };
+  if (limit !== undefined) {
+    options.limit = limit;
+  }
+  return options;
+}
 
 type ListOptions = {
   limit?: number;
