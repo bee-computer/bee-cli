@@ -43,6 +43,14 @@ describe("formatDateValue bare calendar dates (H7)", () => {
     expect(result).toContain("2026-06-06 12:00");
     expect(result).toContain("[");
   });
+
+  it("formats an epoch given as a numeric string (e.g. daily_summary.date)", () => {
+    // "1780617600000" -> same output as the equivalent number, not echoed raw.
+    const asString = formatDateValue("1780704000000", timeZone, nowMs);
+    const asNumber = formatDateValue(1780704000000, timeZone, nowMs);
+    expect(asString).toBe(asNumber);
+    expect(asString).not.toBe("1780704000000");
+  });
 });
 
 describe("formatRecordMarkdown list-of-objects rendering (H6)", () => {

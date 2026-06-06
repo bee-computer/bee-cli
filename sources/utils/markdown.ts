@@ -60,6 +60,14 @@ export function formatDateValue(
     if (isBareCalendarDate(value)) {
       return formatBareCalendarDate(value, timeZone, nowMs);
     }
+    // Some endpoints return an epoch timestamp as a numeric string
+    // (e.g. daily_summary.date = "1780617600000"); Date.parse cannot read
+    // those, so route an all-digit string through the same epoch path as a
+    // numeric value rather than echoing it raw.
+    if (/^\d+$/.test(value)) {
+      const normalized = normalizeEpochMs(Number(value));
+      return normalized === null ? value : formatAiDateTime(normalized, timeZone, nowMs);
+    }
     const parsed = Date.parse(value);
     if (Number.isNaN(parsed)) {
       return value;

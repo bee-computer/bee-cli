@@ -82,7 +82,11 @@ const listPhotos: ActionDefinition<PhotosListInput> = {
       // Query the photo index directly, optionally scoped to a single day. The
       // server filters by captured_at and paginates by cursor, so older photos
       // are not missed. Follow next_cursor until limit is reached.
-      const range = date ? `&start_date=${date}&end_date=${date}` : "";
+      //
+      // The server treats end_date as an exclusive (start-of-day) bound, so a
+      // single --date must request [date, date+1) to cover the whole day;
+      // equal start/end bounds yield a zero-length window and no results.
+      const range = date ? `&start_date=${date}&end_date=${nextDay(date)}` : "";
       const { items } = await fetchAllPages(
         ctx,
         "photos",
@@ -198,6 +202,14 @@ const getPhoto: ActionDefinition<PhotoGetInput> = {
     };
   },
 };
+
+// Returns the calendar day after a YYYY-MM-DD string (UTC date math, no tz
+// drift), used as the exclusive end bound for a single-day photo query.
+function nextDay(date: string): string {
+  const next = new Date(`${date}T00:00:00Z`);
+  next.setUTCDate(next.getUTCDate() + 1);
+  return next.toISOString().slice(0, 10);
+}
 
 export const photosResource: ResourceModule = {
   cliCommand: {

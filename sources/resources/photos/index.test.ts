@@ -137,8 +137,9 @@ describe("photos command (registry-derived)", () => {
       logSpy.mockRestore();
     }
 
+    // end_date is the exclusive next-day bound so the whole of --date is covered.
     expect(captured.start).toBe("2026-06-05");
-    expect(captured.end).toBe("2026-06-05");
+    expect(captured.end).toBe("2026-06-06");
   });
 
   it("get --output writes the image and prints the released summary", async () => {
