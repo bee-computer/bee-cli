@@ -664,7 +664,7 @@ export const TOOL_SNAPSHOT: ToolDefinition[] = [
   },
   {
     "name": "bee_get_photos",
-    "description": "List Bee photos, newest first. Filter by date (YYYY-MM-DD) or scope to one daily summary with dailyId. Set includeImages to return image content.",
+    "description": "List photos synced from the user's photo gallery, newest first. Filter by date (YYYY-MM-DD) or scope to one daily summary with dailyId. Set includeImages to return image content.",
     "inputSchema": {
       "type": "object",
       "properties": {

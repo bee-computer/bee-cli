@@ -29,7 +29,7 @@ const listPhotos: ActionDefinition<PhotosListInput> = {
   mcp: {
     name: "bee_get_photos",
     description:
-      "List Bee photos, newest first. Filter by date (YYYY-MM-DD) or scope to one daily summary with dailyId. Set includeImages to return image content.",
+      "List photos synced from the user's photo gallery, newest first. Filter by date (YYYY-MM-DD) or scope to one daily summary with dailyId. Set includeImages to return image content.",
     inputSchema: objectSchema({
       properties: {
         dailyId: idNumber("Optional Bee daily summary ID."),
