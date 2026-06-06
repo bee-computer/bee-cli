@@ -57,6 +57,9 @@ export function formatDateValue(
   }
 
   if (typeof value === "string") {
+    if (isBareCalendarDate(value)) {
+      return formatBareCalendarDate(value, timeZone, nowMs);
+    }
     const parsed = Date.parse(value);
     if (Number.isNaN(parsed)) {
       return value;
@@ -65,6 +68,24 @@ export function formatDateValue(
   }
 
   return String(value);
+}
+
+const BARE_CALENDAR_DATE = /^\d{4}-\d{2}-\d{2}$/;
+
+function isBareCalendarDate(value: string): boolean {
+  return BARE_CALENDAR_DATE.test(value);
+}
+
+function formatBareCalendarDate(
+  value: string,
+  timeZone: string,
+  nowMs: number
+): string {
+  const todayKey = formatDateTimeParts(nowMs, timeZone).date;
+  if (value === todayKey) {
+    return `${value} [today]`;
+  }
+  return value;
 }
 
 export function formatTimeZoneHeader(timeZone: string): string {
@@ -92,11 +113,63 @@ export function formatRecordMarkdown(options: {
   entries.sort(([a], [b]) => a.localeCompare(b));
 
   for (const [key, value] of entries) {
+    if (isObjectArray(value)) {
+      lines.push(`- ${key}:`);
+      lines.push(...formatObjectArrayBlock(value, timeZone, nowMs, "  "));
+      continue;
+    }
     lines.push(`- ${key}: ${formatInlineValue(key, value, timeZone, nowMs, 0)}`);
   }
 
   lines.push("");
   return lines.join("\n");
+}
+
+function isObjectArray(value: unknown): value is Record<string, unknown>[] {
+  return (
+    Array.isArray(value) &&
+    value.length > 0 &&
+    value.every(
+      (item) =>
+        item !== null && typeof item === "object" && !Array.isArray(item)
+    )
+  );
+}
+
+function formatObjectArrayBlock(
+  items: Record<string, unknown>[],
+  timeZone: string,
+  nowMs: number,
+  indent: string
+): string[] {
+  const lines: string[] = [];
+  items.forEach((item, index) => {
+    lines.push(`${indent}${index + 1}.`);
+    lines.push(...formatBlockObject(item, timeZone, nowMs, `${indent}   `));
+  });
+  return lines;
+}
+
+function formatBlockObject(
+  record: Record<string, unknown>,
+  timeZone: string,
+  nowMs: number,
+  indent: string
+): string[] {
+  const entries = Object.entries(record);
+  entries.sort(([a], [b]) => a.localeCompare(b));
+  const lines: string[] = [];
+  for (const [key, value] of entries) {
+    if (isObjectArray(value)) {
+      lines.push(`${indent}- ${key}:`);
+      lines.push(
+        ...formatObjectArrayBlock(value, timeZone, nowMs, `${indent}  `)
+      );
+      continue;
+    }
+    lines.push(`${indent}- ${key}: ${formatInlineValue(key, value, timeZone, nowMs, 0)}`);
+  }
+  return lines;
 }
 
 function formatDateTimeParts(
