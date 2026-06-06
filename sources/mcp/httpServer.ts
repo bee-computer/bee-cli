@@ -1,7 +1,7 @@
 import type { CommandContext } from "@/commands/types";
 import { handleMcpJsonRpc, MAX_MCP_MESSAGE_BYTES } from "@/mcp/server";
 import type { JsonValue } from "@/mcp/types";
-import { randomBytes, timingSafeEqual } from "node:crypto";
+import { timingSafeEqual } from "node:crypto";
 
 const DEFAULT_HTTP_PORT = 8790;
 const MAX_PORT_ATTEMPTS = 50;
@@ -17,7 +17,13 @@ export async function serveMcpHttp(
   options: McpHttpOptions
 ): Promise<ReturnType<typeof Bun.serve>> {
   const hostname = "127.0.0.1";
-  const token = options.token ?? process.env["BEE_MCP_HTTP_TOKEN"] ?? createToken();
+  const token = options.token ?? process.env["BEE_MCP_HTTP_TOKEN"];
+  if (!token) {
+    throw new Error(
+      "An auth token is required. Pass --token <value> or set BEE_MCP_HTTP_TOKEN " +
+      "(at least 32 characters; e.g. `openssl rand -hex 32`)."
+    );
+  }
   validateToken(token);
   const idleTimeout = DEFAULT_IDLE_TIMEOUT_SECONDS;
 
@@ -38,9 +44,7 @@ export async function serveMcpHttp(
   console.log("Bee MCP HTTP server is running.");
   console.log(`Endpoint: ${endpoint}`);
   console.log("Use POST with JSON-RPC 2.0. Press Ctrl+C to stop.");
-  console.log(`Bearer token: ${token}`);
-  console.log('Clients must send it as "Authorization: Bearer <token>".');
-  console.log("Set BEE_MCP_HTTP_TOKEN to supply a stable token.");
+  console.log('Authenticate with your configured token: "Authorization: Bearer <token>".');
 
   registerShutdownHandlers(server);
 
@@ -274,10 +278,6 @@ function jsonResponse(value: JsonValue, status = 200): Response {
       "cache-control": "no-store",
     },
   });
-}
-
-function createToken(): string {
-  return randomBytes(32).toString("base64url");
 }
 
 function validateToken(token: string): void {

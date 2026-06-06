@@ -12,8 +12,8 @@ import { connectCodex, disconnectCodex, printCodexStatus } from "@/mcp/codex";
 
 const USAGE = [
   "bee mcp serve",
-  "bee mcp serve-http [--port N] [--token VALUE]",
-  "  (token may also be set via BEE_MCP_HTTP_TOKEN)",
+  "bee mcp serve-http --token VALUE [--port N]",
+  "  (token may also be set via BEE_MCP_HTTP_TOKEN; required, at least 32 chars)",
   "bee mcp connect claude",
   "bee mcp connect claude-code",
   "bee mcp connect codex",

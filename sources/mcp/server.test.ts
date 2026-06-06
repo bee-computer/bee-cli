@@ -89,6 +89,18 @@ describe("MCP server", () => {
     );
   });
 
+  it("requires an HTTP token when none is provided", async () => {
+    const saved = process.env["BEE_MCP_HTTP_TOKEN"];
+    delete process.env["BEE_MCP_HTTP_TOKEN"];
+    try {
+      await expect(serveMcpHttp(context, {})).rejects.toThrow("An auth token is required");
+    } finally {
+      if (saved !== undefined) {
+        process.env["BEE_MCP_HTTP_TOKEN"] = saved;
+      }
+    }
+  });
+
   it("lists the Bee MCP tools", async () => {
     const response = await handleMcpJsonRpc({
       jsonrpc: "2.0",
