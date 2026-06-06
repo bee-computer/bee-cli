@@ -5,16 +5,19 @@ import {
   connectClaudeCode,
   connectClaudeDesktop,
   disconnectClaudeCode,
+  disconnectClaudeDesktop,
   printMcpStatus,
 } from "@/mcp/claude";
 import { connectCodex, disconnectCodex, printCodexStatus } from "@/mcp/codex";
 
 const USAGE = [
   "bee mcp serve",
-  "bee mcp serve-http [--port N]",
+  "bee mcp serve-http [--port N] [--token VALUE]",
+  "  (token may also be set via BEE_MCP_HTTP_TOKEN)",
   "bee mcp connect claude",
   "bee mcp connect claude-code",
   "bee mcp connect codex",
+  "bee mcp disconnect claude",
   "bee mcp disconnect claude-code",
   "bee mcp disconnect codex",
   "bee mcp status",
@@ -73,14 +76,14 @@ export const mcpCommand: Command = {
         return;
       }
       if (target === "claude") {
-        console.log("Remove the Bee extension from Claude Desktop settings to disconnect it.");
+        await disconnectClaudeDesktop();
         return;
       }
       if (target === "codex") {
         disconnectCodex();
         return;
       }
-      throw new Error("Use claude-code or codex as the MCP disconnection target.");
+      throw new Error("Use claude, claude-code, or codex as the MCP disconnection target.");
     }
 
     if (subcommand === "status") {
@@ -98,6 +101,7 @@ export const mcpCommand: Command = {
 
 function parseServeHttpArgs(args: readonly string[]): McpHttpOptions {
   let port: number | undefined;
+  let token: string | undefined;
   const positionals: string[] = [];
 
   for (let i = 0; i < args.length; i += 1) {
@@ -111,11 +115,21 @@ function parseServeHttpArgs(args: readonly string[]): McpHttpOptions {
       if (value === undefined) {
         throw new Error("--port requires a value");
       }
-      const parsed = Number.parseInt(value, 10);
+      const parsed = /^\d+$/.test(value) ? Number.parseInt(value, 10) : NaN;
       if (!Number.isInteger(parsed) || parsed <= 0 || parsed > 65535) {
         throw new Error("--port must be an integer between 1 and 65535");
       }
       port = parsed;
+      i += 1;
+      continue;
+    }
+
+    if (arg === "--token") {
+      const value = args[i + 1];
+      if (value === undefined || value.length === 0) {
+        throw new Error("--token requires a value");
+      }
+      token = value;
       i += 1;
       continue;
     }
@@ -134,6 +148,9 @@ function parseServeHttpArgs(args: readonly string[]): McpHttpOptions {
   const options: McpHttpOptions = {};
   if (port !== undefined) {
     options.port = port;
+  }
+  if (token !== undefined) {
+    options.token = token;
   }
   return options;
 }

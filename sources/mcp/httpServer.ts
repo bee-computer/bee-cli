@@ -30,23 +30,54 @@ export async function serveMcpHttp(
     },
   };
   if (options.port !== undefined) {
-    serverOptions.requestedPort = options.port;
+    serverOptions.port = options.port;
   }
   const { server, port } = startServer(serverOptions);
 
   const endpoint = `http://${hostname}:${port}/mcp`;
   console.log("Bee MCP HTTP server is running.");
-  console.log(`Endpoint: ${endpoint}?token=${encodeURIComponent(token)}`);
-  console.log(`Bearer token: ${token}`);
+  console.log(`Endpoint: ${endpoint}`);
   console.log("Use POST with JSON-RPC 2.0. Press Ctrl+C to stop.");
+  console.log(`Bearer token: ${token}`);
+  console.log('Clients must send it as "Authorization: Bearer <token>".');
+  console.log("Set BEE_MCP_HTTP_TOKEN to supply a stable token.");
+
+  registerShutdownHandlers(server);
 
   return server;
+}
+
+const liveServers = new Set<ReturnType<typeof Bun.serve>>();
+let shutdownHandlersRegistered = false;
+
+function registerShutdownHandlers(server: ReturnType<typeof Bun.serve>): void {
+  liveServers.add(server);
+
+  if (shutdownHandlersRegistered) {
+    return;
+  }
+  shutdownHandlersRegistered = true;
+
+  const shutdown = (): void => {
+    for (const live of liveServers) {
+      live.stop(true);
+    }
+    liveServers.clear();
+    process.exit(0);
+  };
+  process.on("SIGINT", shutdown);
+  process.on("SIGTERM", shutdown);
+}
+
+/** Exposed for tests: number of servers currently tracked for shutdown. */
+export function liveServerCount(): number {
+  return liveServers.size;
 }
 
 type ServerOptions = {
   hostname: string;
   idleTimeout: number;
-  requestedPort?: number;
+  port?: number;
   fetch: (
     request: Request,
     server: Bun.Server<undefined>
@@ -57,12 +88,12 @@ function startServer(options: ServerOptions): {
   server: ReturnType<typeof Bun.serve>;
   port: number;
 } {
-  if (options.requestedPort !== undefined) {
-    const server = tryStartServer(options, options.requestedPort);
+  if (options.port !== undefined) {
+    const server = tryStartServer(options, options.port);
     if (!server) {
-      throw new Error(`Port ${options.requestedPort} is in use. Choose another with --port.`);
+      throw new Error(`Port ${options.port} is in use. Choose another with --port.`);
     }
-    return { server, port: options.requestedPort };
+    return { server, port: options.port };
   }
 
   for (let offset = 0; offset <= MAX_PORT_ATTEMPTS; offset += 1) {
@@ -85,6 +116,7 @@ function tryStartServer(
       hostname: options.hostname,
       port,
       idleTimeout: options.idleTimeout,
+      maxRequestBodySize: MAX_MCP_MESSAGE_BYTES,
       fetch: options.fetch,
     });
   } catch (error) {
@@ -106,7 +138,14 @@ async function handleHttpRequest(
     return new Response("Not Found", { status: 404 });
   }
 
-  if (!isAuthorized(request, url, token)) {
+  if (!isLocalRequest(request)) {
+    return new Response("Forbidden", {
+      status: 403,
+      headers: { "cache-control": "no-store" },
+    });
+  }
+
+  if (!isAuthorized(request, token)) {
     return new Response("Unauthorized", {
       status: 401,
       headers: {
@@ -170,7 +209,7 @@ async function handleHttpRequest(
   return jsonResponse(result);
 }
 
-function isAuthorized(request: Request, url: URL, token: string): boolean {
+function isAuthorized(request: Request, token: string): boolean {
   const authHeader = request.headers.get("authorization");
   if (authHeader) {
     const [scheme, ...parts] = authHeader.split(" ");
@@ -180,8 +219,45 @@ function isAuthorized(request: Request, url: URL, token: string): boolean {
     }
   }
 
-  const queryToken = url.searchParams.get("token");
-  return queryToken !== null && secureEqual(queryToken, token);
+  return false;
+}
+
+const ALLOWED_HOSTS = new Set(["127.0.0.1", "localhost", "[::1]", "::1"]);
+
+function isAllowedHost(host: string | null): boolean {
+  if (host === null) {
+    return false;
+  }
+  const withoutPort = stripPort(host);
+  return ALLOWED_HOSTS.has(withoutPort.toLowerCase());
+}
+
+function stripPort(host: string): string {
+  if (host.startsWith("[")) {
+    const end = host.indexOf("]");
+    return end === -1 ? host : host.slice(0, end + 1);
+  }
+  const colon = host.indexOf(":");
+  return colon === -1 ? host : host.slice(0, colon);
+}
+
+function isLocalRequest(request: Request): boolean {
+  if (!isAllowedHost(request.headers.get("host"))) {
+    return false;
+  }
+
+  const origin = request.headers.get("origin");
+  if (origin === null) {
+    return true;
+  }
+
+  let originHost: string;
+  try {
+    originHost = new URL(origin).host;
+  } catch {
+    return false;
+  }
+  return isAllowedHost(originHost);
 }
 
 function secureEqual(left: string, right: string): boolean {

@@ -1,11 +1,11 @@
 import type { CommandContext } from "@/commands/types";
 import { BEE_MCP_TOOLS } from "@/mcp/toolDefinitions";
 import { crc32, writeZip } from "@/mcp/zip";
-import { beeConfigDir, beeLaunch, type BeeLaunch } from "@/mcp/launch";
+import { assertShellSafe, beeConfigDir, beeLaunch, customBeeConfigDir, type BeeLaunch } from "@/mcp/launch";
 import { VERSION } from "@/version";
 import { deflateSync } from "node:zlib";
 import { existsSync } from "node:fs";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { spawnSync } from "node:child_process";
 
@@ -30,12 +30,22 @@ export async function connectClaudeDesktop(context: CommandContext): Promise<voi
 export function connectClaudeCode(context: CommandContext): void {
   const launch = beeLaunch(context);
   ensureClaudeCode();
+  const configDir = customBeeConfigDir();
+  if (process.platform === "win32") {
+    if (configDir !== null) {
+      assertShellSafe(configDir, "BEE_CONFIG_DIR");
+    }
+    assertShellSafe(launch.command, "Bee CLI path");
+    launch.args.forEach((arg) => assertShellSafe(arg, "Bee CLI argument"));
+  }
   spawnClaude(["mcp", "remove", "--scope", "user", SERVER_NAME], false);
+  const envArgs = configDir !== null ? ["--env", `BEE_CONFIG_DIR=${configDir}`] : [];
   const result = spawnClaude([
     "mcp",
     "add",
     "--scope",
     "user",
+    ...envArgs,
     SERVER_NAME,
     "--",
     launch.command,
@@ -45,6 +55,18 @@ export function connectClaudeCode(context: CommandContext): void {
     throw new Error(outputText(result.stderr).trim() || result.error?.message || "Unable to register Bee with Claude Code.");
   }
   console.log("Bee MCP is connected to Claude Code.");
+}
+
+export async function disconnectClaudeDesktop(): Promise<void> {
+  const packagePath = claudeDesktopPackagePath();
+  if (!existsSync(packagePath)) {
+    console.log(`No Bee connector package found at ${packagePath}.`);
+    console.log("If Bee is still installed in Claude Desktop, remove it from Claude Desktop settings.");
+    return;
+  }
+  await rm(packagePath, { force: true });
+  console.log(`Removed the Bee connector package: ${packagePath}`);
+  console.log("If Bee is still installed in Claude Desktop, remove it from Claude Desktop settings.");
 }
 
 export function disconnectClaudeCode(): void {
@@ -58,16 +80,31 @@ export function disconnectClaudeCode(): void {
 
 export function printMcpStatus(context: CommandContext): void {
   const launch = beeLaunch(context);
-  console.log(`Bee MCP command: ${launch.command} ${launch.args.join(" ")}`.trim());
-  console.log(`Environment: ${context.env}`);
-  const claudeCode = spawnClaude(["mcp", "get", SERVER_NAME], false);
-  if (claudeCode.status === 0) {
-    console.log("Claude Code: connected");
+  console.log("Bee MCP status");
+  console.log(`  Command: ${launch.command} ${launch.args.join(" ")}`.trimEnd());
+  console.log(`  Environment: ${context.env}`);
+
+  const version = spawnClaude(["--version"], false);
+  if (version.error || version.status === null || version.status !== 0) {
+    console.log("  Claude Code: not installed");
   } else {
-    console.log("Claude Code: not connected");
+    const claudeCode = spawnClaude(["mcp", "get", SERVER_NAME], false);
+    if (claudeCode.status === 0) {
+      console.log("  Claude Code: connected");
+    } else {
+      console.log("  Claude Code: not connected");
+      console.log("    Run: bee mcp connect claude-code");
+    }
   }
+
   const packagePath = claudeDesktopPackagePath();
-  console.log(`Claude Desktop package: ${existsSync(packagePath) ? packagePath : "not generated"}`);
+  if (existsSync(packagePath)) {
+    console.log(`  Claude Desktop: connector package generated (${packagePath})`);
+    console.log("    Confirm Bee is installed in Claude Desktop settings, or run: bee mcp disconnect claude");
+  } else {
+    console.log("  Claude Desktop: no connector package generated");
+    console.log("    Run: bee mcp connect claude");
+  }
 }
 
 async function writeClaudeDesktopPackage(context: CommandContext): Promise<string> {
@@ -81,7 +118,7 @@ async function writeClaudeDesktopPackage(context: CommandContext): Promise<strin
     },
     {
       name: "server/index.js",
-      data: Buffer.from(claudeServerScript(launch), "utf8"),
+      data: Buffer.from(claudeServerScript(launch, customBeeConfigDir()), "utf8"),
     },
     {
       name: "icon.png",
@@ -135,16 +172,21 @@ function claudeManifest(): Record<string, unknown> {
   };
 }
 
-function claudeServerScript(launch: BeeLaunch): string {
+function claudeServerScript(launch: BeeLaunch, configDir: string | null): string {
+  const envLine = configDir !== null
+    ? `const env = Object.assign({}, process.env, { BEE_CONFIG_DIR: ${JSON.stringify(configDir)} });`
+    : "const env = process.env;";
   return `#!/usr/bin/env node
 const { spawn } = require("child_process");
 
 const command = ${JSON.stringify(launch.command)};
 const args = ${JSON.stringify(launch.args)};
+${envLine}
 
 const child = spawn(command, args, {
   stdio: "inherit",
   windowsHide: true,
+  env,
 });
 
 child.on("error", (error) => {
