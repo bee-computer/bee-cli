@@ -187,8 +187,12 @@ function positionalLabel(name: string): string {
   return name.charAt(0).toUpperCase() + name.slice(1);
 }
 
+// Only resources that expose at least one CLI action get a generated command.
+// MCP-only resources (e.g. status, whose CLI command is hand-written) are skipped.
 export const RESOURCE_COMMANDS: Record<string, Command> = Object.fromEntries(
-  RESOURCES.map((resource) => [resource.cliCommand.name, makeCliCommand(resource)])
+  RESOURCES
+    .filter((resource) => resource.actions.some((action) => action.cli !== undefined))
+    .map((resource) => [resource.cliCommand.name, makeCliCommand(resource)])
 );
 
 // Re-export so callers needing a single Command by name stay decoupled from

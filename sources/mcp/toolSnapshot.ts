@@ -681,4 +681,3 @@ export const TOOL_SNAPSHOT: ToolDefinition[] = [
     }
   }
 ];
-

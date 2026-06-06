@@ -32,11 +32,19 @@ export function customBeeConfigDir(): string | null {
   return explicit && explicit.trim().length > 0 ? explicit : null;
 }
 
-// On Windows the connector CLIs are spawned with shell:true, which joins the
-// argv into a cmd.exe string without per-arg quoting. Reject values that could
-// break out of an argument into shell syntax before they are interpolated.
+// On Windows the connector CLIs are spawned via the shell (so npm `.cmd` shims
+// resolve), which joins the argv into a cmd.exe string without per-arg quoting.
+// Reject values that could break out of an argument into shell syntax.
 export function assertShellSafe(value: string, label: string): void {
   if (/[&|;<>^`"'()\r\n%!*?]/.test(value)) {
     throw new Error(`${label} contains characters that cannot be passed safely to the connector CLI.`);
   }
+}
+
+// Double-quote arguments containing whitespace so a shell-spawned command line
+// does not word-split paths like "C:\Program Files\bee". assertShellSafe has
+// already rejected quotes and shell metacharacters, so wrapping in quotes here
+// is safe. No-op for arguments without whitespace.
+export function quoteShellArg(value: string): string {
+  return /\s/.test(value) ? `"${value}"` : value;
 }

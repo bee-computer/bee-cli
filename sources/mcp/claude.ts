@@ -1,7 +1,7 @@
 import type { CommandContext } from "@/commands/types";
 import { BEE_MCP_TOOLS } from "@/mcp/toolDefinitions";
 import { crc32, writeZip } from "@/mcp/zip";
-import { assertShellSafe, beeConfigDir, beeLaunch, customBeeConfigDir, type BeeLaunch } from "@/mcp/launch";
+import { assertShellSafe, beeConfigDir, beeLaunch, customBeeConfigDir, quoteShellArg, type BeeLaunch } from "@/mcp/launch";
 import { VERSION } from "@/version";
 import { deflateSync } from "node:zlib";
 import { existsSync } from "node:fs";
@@ -220,10 +220,11 @@ function ensureClaudeCode(): void {
 }
 
 function spawnClaude(args: string[], inherit: boolean): ReturnType<typeof spawnSync> {
-  return spawnSync("claude", args, {
+  const useShell = process.platform === "win32";
+  return spawnSync("claude", useShell ? args.map(quoteShellArg) : args, {
     encoding: "utf8",
     stdio: inherit ? "inherit" : "pipe",
-    shell: process.platform === "win32",
+    shell: useShell,
   });
 }
 

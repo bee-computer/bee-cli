@@ -97,6 +97,14 @@ describe("search command (registry-derived)", () => {
     );
   });
 
+  it("rejects keyword-only flags combined with --neural", async () => {
+    const ctx = proxyContext(() => Response.json({}));
+    await expectError(
+      searchCommand.run(["--query", "hi", "--neural", "--filter", "facts"], ctx),
+      "--filter, --scope, and --sort cannot be used with --neural."
+    );
+  });
+
   it("rejects --cursor", async () => {
     const ctx = proxyContext(() => Response.json({}));
     await expectError(

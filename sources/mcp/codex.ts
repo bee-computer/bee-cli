@@ -1,5 +1,5 @@
 import type { CommandContext } from "@/commands/types";
-import { assertShellSafe, beeConfigDir, beeLaunch } from "@/mcp/launch";
+import { assertShellSafe, beeConfigDir, beeLaunch, quoteShellArg } from "@/mcp/launch";
 import { spawnSync } from "node:child_process";
 
 const SERVER_NAME = "bee";
@@ -102,10 +102,11 @@ function ensureCodex(): void {
 }
 
 function spawnCodex(args: string[], inherit: boolean): ReturnType<typeof spawnSync> {
-  return spawnSync("codex", args, {
+  const useShell = process.platform === "win32";
+  return spawnSync("codex", useShell ? args.map(quoteShellArg) : args, {
     encoding: "utf8",
     stdio: inherit ? "inherit" : "pipe",
-    shell: process.platform === "win32",
+    shell: useShell,
   });
 }
 

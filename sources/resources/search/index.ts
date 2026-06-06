@@ -27,8 +27,11 @@ import {
 
 const LIMIT_MAX = 100;
 
-const USAGE =
-  "bee search --query <text> [--limit N] [--filter conversations|daily|facts|all] [--sort relevance|mostRecent] [--neural] [--since <epochMs>] [--until <epochMs>] [--scope conversations|all] [--json]";
+const USAGE = [
+  "bee search --query <text> [--limit N] [--json]",
+  "  keyword (default): [--filter conversations|daily|facts|all] [--sort relevance|mostRecent] [--scope conversations|all]",
+  "  neural: --neural [--since <epochMs>] [--until <epochMs>]  (conversations only; keyword flags do not apply)",
+].join("\n");
 
 type SearchFilter = "all" | "conversations" | "daily" | "facts";
 type SearchSort = "relevance" | "mostRecent";
@@ -189,6 +192,18 @@ function coerceCliInput(raw: { readonly [key: string]: unknown }): SearchInput {
 
   if (!neural && (since !== undefined || until !== undefined)) {
     throw new Error("--since and --until can only be used with --neural.");
+  }
+
+  // Neural (semantic) search scopes to conversations only and orders by
+  // relevance, so the keyword-only scoping flags do not apply.
+  if (
+    neural &&
+    (raw["filter"] !== undefined ||
+      raw["scope"] !== undefined ||
+      raw["sort"] !== undefined ||
+      raw["sortBy"] !== undefined)
+  ) {
+    throw new Error("--filter, --scope, and --sort cannot be used with --neural.");
   }
 
   if (neural) {
