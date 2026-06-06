@@ -8,7 +8,7 @@
 import { printJson } from "@/client/clientApi";
 import { printToolData } from "@/commands/mcpToolOutput";
 import { coerceOptionalString, numberArg, requiredIdArg } from "@/resources/coerce";
-import { apiGet, apiPost } from "@/resources/http";
+import { apiGet } from "@/resources/http";
 import { arrayProp, asRecord, parseJson } from "@/resources/json";
 import { idNumber, limit as limitSchema, cursor as cursorSchema, objectSchema } from "@/resources/schema";
 import type { ActionDefinition, ResourceModule, Surface } from "@/resources/types";
@@ -276,19 +276,13 @@ const relatedConversations: ActionDefinition<ConversationRelatedInput> = {
       : numberArg(raw["limit"], 5, 1, 10),
   }),
   run: async (ctx, input) => {
-    const data = asRecord(parseJson(await apiGet(ctx, `/v1/conversations/${input.id}`)));
-    const conversation = asRecord(data.conversation);
-    const summary = [conversation.short_summary, conversation.summary]
-      .filter((value) => typeof value === "string")
-      .join("\n");
-    const query = summary.trim() || `conversation ${input.id}`;
-    const raw = asRecord(parseJson(await apiPost(ctx, "/v1/search/conversations", { query, limit: input.limit + 1 })));
-    const results = arrayProp(raw, "results")
-      .filter((item) => String(asRecord(item).id) !== String(input.id))
-      .slice(0, input.limit);
+    // Related conversations are precomputed server-side (AI-extracted keywords,
+    // ranked, persisted) and read from /v1/conversations/:id/related.
+    const raw = asRecord(parseJson(await apiGet(ctx, `/v1/conversations/${input.id}/related`)));
+    const conversations = arrayProp(raw, "conversations").slice(0, input.limit);
     return {
       kind: "json",
-      data: { conversationId: input.id, conversations: results, search_mode: raw.search_mode ?? "bm25" },
+      data: { conversationId: input.id, conversations },
     };
   },
 };

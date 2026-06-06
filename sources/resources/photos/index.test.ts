@@ -79,16 +79,19 @@ describe("photos command (registry-derived)", () => {
 
   // ---- success paths --------------------------------------------------------
 
-  it("lists photos as JSON byte-identically to the tool projection", async () => {
+  it("lists photos from the photo index as JSON", async () => {
+    let requestedPath = "";
     const ctx = proxyContext((request) => {
       const url = new URL(request.url);
-      if (url.pathname === "/v1/daily") {
+      requestedPath = url.pathname;
+      if (url.pathname === "/v1/photos") {
         return Response.json({
-          daily_summaries: [{
-            id: 7,
-            date: "2026-06-05",
-            photos: [{ id: 11 }, { id: 12 }],
-          }],
+          photos: [
+            { id: 11, captured_at: 1717545600000, conversation_id: 3 },
+            { id: 12, captured_at: 1717459200000, conversation_id: null },
+          ],
+          next_cursor: null,
+          timezone: "UTC",
         });
       }
       return Response.json({});
@@ -104,11 +107,38 @@ describe("photos command (registry-derived)", () => {
       logSpy.mockRestore();
     }
 
+    expect(requestedPath).toBe("/v1/photos");
     const parsed = JSON.parse(logs.join("\n")) as { photos: unknown[] };
     expect(parsed.photos).toEqual([
-      { id: 11, daily_summary_id: 7, date: "2026-06-05" },
-      { id: 12, daily_summary_id: 7, date: "2026-06-05" },
+      { id: 11, captured_at: 1717545600000, conversation_id: 3 },
+      { id: 12, captured_at: 1717459200000, conversation_id: null },
     ]);
+  });
+
+  it("list --date forwards start_date/end_date to the server filter", async () => {
+    const captured: { start: string | null; end: string | null } = { start: null, end: null };
+    const ctx = proxyContext((request) => {
+      const url = new URL(request.url);
+      if (url.pathname === "/v1/photos") {
+        captured.start = url.searchParams.get("start_date");
+        captured.end = url.searchParams.get("end_date");
+        return Response.json({ photos: [], next_cursor: null, timezone: "UTC" });
+      }
+      return Response.json({});
+    });
+
+    const logs: string[] = [];
+    const logSpy = spyOn(console, "log").mockImplementation((...args) => {
+      logs.push(args.join(" "));
+    });
+    try {
+      await photosCommand.run(["list", "--date", "2026-06-05", "--json"], ctx);
+    } finally {
+      logSpy.mockRestore();
+    }
+
+    expect(captured.start).toBe("2026-06-05");
+    expect(captured.end).toBe("2026-06-05");
   });
 
   it("get --output writes the image and prints the released summary", async () => {

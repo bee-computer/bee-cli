@@ -298,22 +298,42 @@ describe("conversations command (registry-derived)", () => {
 
   // ---- related success path -------------------------------------------------
 
-  it("renders related conversations as markdown via the tool projection", async () => {
+  it("renders related conversations from /v1/conversations/:id/related", async () => {
+    let requestedPath = "";
     const ctx = proxyContext((request) => {
-      const url = new URL(request.url);
-      if (url.pathname === "/v1/conversations/4") {
-        return Response.json({ conversation: { id: 4, short_summary: "S", summary: "Long" } });
-      }
-      if (url.pathname === "/v1/search/conversations") {
+      requestedPath = new URL(request.url).pathname;
+      if (requestedPath === "/v1/conversations/4/related") {
         return Response.json({
-          results: [{ id: 5 }, { id: 4 }],
-          search_mode: "bm25",
+          conversations: [{ id: 5, short_summary: "Related A" }, { id: 6, short_summary: "Related B" }],
+          timezone: "UTC",
         });
       }
       return Response.json({});
     });
     const logs = await captureStdout(() => conversationsCommand.run(["related", "4", "--limit", "5"], ctx));
     const out = logs.join("\n");
+    expect(requestedPath).toBe("/v1/conversations/4/related");
     expect(out).toContain("# Related Conversations");
+  });
+
+  it("limits related conversations client-side", async () => {
+    const ctx = proxyContext((request) => {
+      if (new URL(request.url).pathname === "/v1/conversations/4/related") {
+        return Response.json({
+          conversations: [{ id: 5 }, { id: 6 }, { id: 7 }],
+          timezone: "UTC",
+        });
+      }
+      return Response.json({});
+    });
+    const logs: string[] = [];
+    const spy = spyOn(console, "log").mockImplementation((...a) => { logs.push(a.join(" ")); });
+    try {
+      await conversationsCommand.run(["related", "4", "--limit", "2", "--json"], ctx);
+    } finally {
+      spy.mockRestore();
+    }
+    const parsed = JSON.parse(logs.join("\n")) as { conversations: unknown[] };
+    expect(parsed.conversations).toHaveLength(2);
   });
 });

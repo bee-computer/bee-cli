@@ -2,6 +2,8 @@ import { afterEach, describe, expect, it, spyOn } from "bun:test";
 import type { CommandContext } from "@/commands/types";
 import { createProxyClient } from "@/client";
 import { dailyCommand } from "@/commands/daily";
+import { dailyResource } from "@/resources/daily";
+import { jsonString } from "@/resources/json";
 
 type BunServer = ReturnType<typeof Bun.serve>;
 
@@ -255,6 +257,9 @@ describe("daily command (current behavior golden)", () => {
     const ctx = proxyContext((request) => {
       const url = new URL(request.url);
       if (url.pathname === "/v1/daily") {
+        // find filters server-side with from=to=<date> (no client scan).
+        expect(url.searchParams.get("from")).toBe("2026-06-05");
+        expect(url.searchParams.get("to")).toBe("2026-06-05");
         return Response.json(LIST_RESPONSE);
       }
       if (url.pathname === "/v1/daily/2") {
@@ -316,5 +321,52 @@ describe("daily command (current behavior golden)", () => {
   it("find rejects a missing date", async () => {
     const ctx = proxyContext(() => Response.json({}));
     await expectError(dailyCommand.run(["find"], ctx), "Missing date.");
+  });
+});
+
+// ---- MCP bee_list_daily_summaries (date-range, server-filtered) -------------
+
+describe("bee_list_daily_summaries action", () => {
+  const action = dailyResource.actions.find(
+    (candidate) => candidate.mcp?.name === "bee_list_daily_summaries"
+  );
+
+  it("requests /v1/daily with from/to and returns the summaries directly", async () => {
+    const captured: { from: string | null; to: string | null; limit: string | null } = {
+      from: null,
+      to: null,
+      limit: null,
+    };
+    const ctx = proxyContext((request) => {
+      const url = new URL(request.url);
+      if (url.pathname === "/v1/daily") {
+        captured.from = url.searchParams.get("from");
+        captured.to = url.searchParams.get("to");
+        captured.limit = url.searchParams.get("limit");
+        return Response.json(LIST_RESPONSE);
+      }
+      return Response.json({});
+    });
+
+    if (!action) {
+      throw new Error("bee_list_daily_summaries action not found");
+    }
+    const input = action.coerceInput(
+      { startDate: "2026-06-04", endDate: "2026-06-05", limit: 30 },
+      "mcp"
+    );
+    const result = await action.run(ctx, input);
+    if (result.kind !== "json") {
+      throw new Error("expected json result");
+    }
+    expect(captured.from).toBe("2026-06-04");
+    expect(captured.to).toBe("2026-06-05");
+    expect(captured.limit).toBe("30");
+    const parsed = JSON.parse(jsonString(result.data)) as {
+      daily_summaries: unknown[];
+      timezone: string;
+    };
+    expect(parsed.daily_summaries).toHaveLength(2);
+    expect(parsed.timezone).toBe("America/New_York");
   });
 });

@@ -6,8 +6,8 @@ import { printJson } from "@/client/clientApi";
 import { firstText, printToolData } from "@/commands/mcpToolOutput";
 import type { ToolResult } from "@/mcp/types";
 import { coerceLimit, coerceOptionalString, optionalIdArg, stringOrNumberArg } from "@/resources/coerce";
-import { apiGet, fetchPhoto } from "@/resources/http";
-import { arrayProp, asRecord, itemDay, jsonString, parseJson } from "@/resources/json";
+import { apiGet, fetchAllPages, fetchPhoto } from "@/resources/http";
+import { arrayProp, asRecord, jsonString, parseJson } from "@/resources/json";
 import { idNumber, limit as limitSchema, numberOrString, objectSchema } from "@/resources/schema";
 import type { ActionDefinition, ResourceModule } from "@/resources/types";
 
@@ -29,7 +29,7 @@ const listPhotos: ActionDefinition<PhotosListInput> = {
   mcp: {
     name: "bee_get_photos",
     description:
-      "List Bee photos from summaries. Set includeImages to return image content when numeric photo IDs are available.",
+      "List Bee photos, newest first. Filter by date (YYYY-MM-DD) or scope to one daily summary with dailyId. Set includeImages to return image content.",
     inputSchema: objectSchema({
       properties: {
         dailyId: idNumber("Optional Bee daily summary ID."),
@@ -71,19 +71,29 @@ const listPhotos: ActionDefinition<PhotosListInput> = {
   },
   run: async (ctx, input) => {
     const { dailyId, date, limit, includeImages } = input;
-    const summaries = dailyId !== null
-      ? [asRecord(parseJson(await apiGet(ctx, `/v1/daily/${dailyId}`))).daily_summary]
-      : arrayProp(parseJson(await apiGet(ctx, `/v1/daily?limit=${Math.max(limit, 30)}`)), "daily_summaries");
-
-    const photos = summaries
-      .map((item) => asRecord(item))
-      .filter((summary) => !date || itemDay(summary) === date)
-      .flatMap((summary) => arrayProp(summary, "photos").map((photo) => ({
-        ...asRecord(photo),
-        daily_summary_id: summary.id ?? null,
-        date: itemDay(summary),
-      })))
-      .slice(0, limit);
+    let photos: unknown[];
+    if (dailyId !== null) {
+      // Photos attached to one specific daily summary.
+      const summary = asRecord(asRecord(parseJson(await apiGet(ctx, `/v1/daily/${dailyId}`))).daily_summary);
+      photos = arrayProp(summary, "photos")
+        .map((photo) => ({ ...asRecord(photo), daily_summary_id: summary.id ?? null }))
+        .slice(0, limit);
+    } else {
+      // Query the photo index directly, optionally scoped to a single day. The
+      // server filters by captured_at and paginates by cursor, so older photos
+      // are not missed. Follow next_cursor until limit is reached.
+      const range = date ? `&start_date=${date}&end_date=${date}` : "";
+      const { items } = await fetchAllPages(
+        ctx,
+        "photos",
+        (cursor) => {
+          const base = `/v1/photos?limit=${Math.min(Math.max(limit, 20), 100)}${range}`;
+          return cursor ? `${base}&cursor=${encodeURIComponent(cursor)}` : base;
+        },
+        (acc) => acc.length >= limit
+      );
+      photos = items.slice(0, limit);
+    }
 
     if (!includeImages) {
       return { kind: "json", data: { photos } };
@@ -91,13 +101,10 @@ const listPhotos: ActionDefinition<PhotosListInput> = {
 
     const content: ToolResult["content"] = [{
       type: "text",
-      text: jsonString({
-        photos,
-        note: "Images are included only for numeric photo IDs accepted by the Bee developer API.",
-      }),
+      text: jsonString({ photos }),
     }];
     for (const photo of photos) {
-      const id = asRecord(photo).id ?? asRecord(photo).remote_url_id;
+      const id = asRecord(photo).id;
       if (id === undefined || id === null || !/^\d+$/.test(String(id))) {
         continue;
       }

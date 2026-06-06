@@ -4,7 +4,7 @@
 import { printToolData } from "@/commands/mcpToolOutput";
 import { coerceLimit, coerceOptionalString, coerceRequiredId, cursorSuffix } from "@/resources/coerce";
 import { apiGet } from "@/resources/http";
-import { arrayProp, asRecord, parseJson } from "@/resources/json";
+import { parseJson } from "@/resources/json";
 import { cursor as cursorSchema, idNumber, limit as limitSchema, objectSchema } from "@/resources/schema";
 import type { ActionDefinition, ResourceModule } from "@/resources/types";
 
@@ -80,10 +80,8 @@ const getInsight: ActionDefinition<InsightGetInput> = {
   },
   coerceInput: (raw, surface) => ({ id: coerceRequiredId(raw["id"], surface) }),
   run: async (ctx, input) => {
-    const data = parseJson(await apiGet(ctx, "/v1/insights?limit=100"));
-    const insight =
-      arrayProp(data, "insights").find((item) => String(asRecord(item).id) === String(input.id)) ?? null;
-    return { kind: "json", data: { insight, timezone: asRecord(data).timezone ?? null } };
+    const data = parseJson(await apiGet(ctx, `/v1/insights/${input.id}`));
+    return { kind: "json", data };
   },
 };
 

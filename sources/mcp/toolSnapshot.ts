@@ -604,8 +604,8 @@ export const TOOL_SNAPSHOT: ToolDefinition[] = [
     }
   },
   {
-    "name": "bee_get_recent_locations",
-    "description": "Show recent Bee location clusters.",
+    "name": "bee_get_location_clusters",
+    "description": "Show Bee location clusters: places grouped by visit frequency. Lower minVisits to surface places visited only once or twice (default 3).",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -615,9 +615,39 @@ export const TOOL_SNAPSHOT: ToolDefinition[] = [
           "maximum": 20,
           "description": "Maximum items to return."
         },
+        "minVisits": {
+          "type": "number",
+          "minimum": 1,
+          "maximum": 1000,
+          "description": "Minimum visits for a place to appear. Defaults to 3."
+        },
         "includeVisits": {
           "type": "boolean",
           "description": "Include individual visits inside each cluster."
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "bee_get_recent_visits",
+    "description": "List individual Bee location visits in reverse-chronological order (each with start/end time, duration, and address). Use 'from'/'to' to scope a date range; omit for the most recent window. For places grouped by frequency, use bee_get_location_clusters instead.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "from": {
+          "type": "string",
+          "description": "Start of range. Date as YYYY-MM-DD or an ISO timestamp (interpreted in your timezone)."
+        },
+        "to": {
+          "type": "string",
+          "description": "End of range. Date as YYYY-MM-DD or an ISO timestamp (interpreted in your timezone)."
+        },
+        "limit": {
+          "type": "number",
+          "minimum": 1,
+          "maximum": 50,
+          "description": "Maximum items to return."
         }
       },
       "additionalProperties": false
@@ -634,7 +664,7 @@ export const TOOL_SNAPSHOT: ToolDefinition[] = [
   },
   {
     "name": "bee_get_photos",
-    "description": "List Bee photos from summaries. Set includeImages to return image content when numeric photo IDs are available.",
+    "description": "List Bee photos, newest first. Filter by date (YYYY-MM-DD) or scope to one daily summary with dailyId. Set includeImages to return image content.",
     "inputSchema": {
       "type": "object",
       "properties": {

@@ -111,16 +111,11 @@ describe("insights command (registry-derived)", () => {
     expect(requestedPath).toBe("/v1/insights?limit=5");
   });
 
-  it("gets one insight by id as JSON", async () => {
+  it("gets one insight by id as JSON via /v1/insights/:id", async () => {
+    let requestedPath = "";
     const ctx = proxyContext((request) => {
-      const url = new URL(request.url);
-      if (url.pathname === "/v1/insights") {
-        return Response.json({
-          insights: [{ id: 1, title: "A" }, { id: 2, title: "B" }],
-          timezone: "UTC",
-        });
-      }
-      return Response.json({});
+      requestedPath = new URL(request.url).pathname;
+      return Response.json({ id: 2, title: "B", timezone: "UTC" });
     });
 
     const logs: string[] = [];
@@ -133,8 +128,8 @@ describe("insights command (registry-derived)", () => {
       logSpy.mockRestore();
     }
 
-    const parsed = JSON.parse(logs.join("\n")) as { insight: { id: number; title: string }; timezone: string };
-    expect(parsed.insight).toEqual({ id: 2, title: "B" });
-    expect(parsed.timezone).toBe("UTC");
+    expect(requestedPath).toBe("/v1/insights/2");
+    const parsed = JSON.parse(logs.join("\n")) as { id: number; title: string; timezone: string };
+    expect(parsed).toEqual({ id: 2, title: "B", timezone: "UTC" });
   });
 });

@@ -69,11 +69,15 @@ function normalizeRecord(payload: unknown): Record<string, unknown> {
 
 async function contextRun(ctx: ActionContext): Promise<ActionResult> {
   const day = localDateKey(new Date());
+  // journals + conversations filter on created_at server-side via from/to, and
+  // daily on its DATE column via from=to=<day>, so each fetch returns only the
+  // target day — no client-side itemDay filtering needed.
+  const range = `from=${day}&to=${day}`;
   const [brief, conversations, daily, journals, todos] = await Promise.all([
     apiGet(ctx, "/v1/todayBrief"),
-    apiGet(ctx, "/v1/conversations?limit=30"),
-    apiGet(ctx, "/v1/daily?limit=30"),
-    apiGet(ctx, "/v1/journals?limit=30"),
+    apiGet(ctx, `/v1/conversations?limit=30&${range}`),
+    apiGet(ctx, `/v1/daily?limit=30&${range}`),
+    apiGet(ctx, `/v1/journals?limit=30&${range}`),
     apiGet(ctx, "/v1/todos?limit=50"),
   ]);
   return {
@@ -83,8 +87,8 @@ async function contextRun(ctx: ActionContext): Promise<ActionResult> {
       todayBrief: parseJson(brief),
       dailySummary: arrayProp(parseJson(daily), "daily_summaries").find((item) => itemDay(item) === day) ?? null,
       activeTodos: arrayProp(parseJson(todos), "todos").filter((item) => asRecord(item).completed !== true).slice(0, 10),
-      recentNotes: arrayProp(parseJson(journals), "journals").filter((item) => itemDay(item) === day).slice(0, 5),
-      recentConversations: arrayProp(parseJson(conversations), "conversations").filter((item) => itemDay(item) === day).slice(0, 5),
+      recentNotes: arrayProp(parseJson(journals), "journals").slice(0, 5),
+      recentConversations: arrayProp(parseJson(conversations), "conversations").slice(0, 5),
     },
   };
 }

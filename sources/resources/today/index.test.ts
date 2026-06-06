@@ -99,8 +99,16 @@ describe("today command (registry-derived)", () => {
   // ---- context (--context) success path -------------------------------------
 
   it("--context fetches the 5-GET aggregation and renders Today", async () => {
+    const dateFiltered: string[] = [];
     const ctx = proxyContext((request) => {
       const url = new URL(request.url);
+      // The date-scoped fetches push the target day via from/to (server-filtered,
+      // no client itemDay scan). todos has no date filter.
+      const from = url.searchParams.get("from");
+      const to = url.searchParams.get("to");
+      if (from !== null && from === to) {
+        dateFiltered.push(url.pathname);
+      }
       switch (url.pathname) {
         case "/v1/todayBrief":
           return Response.json({ summary: "brief" });
@@ -132,6 +140,7 @@ describe("today command (registry-derived)", () => {
     expect(parsed).toHaveProperty("recentNotes");
     expect(parsed).toHaveProperty("recentConversations");
     expect(parsed["todayBrief"]).toEqual({ summary: "brief" });
+    expect(dateFiltered.sort()).toEqual(["/v1/conversations", "/v1/daily", "/v1/journals"]);
   });
 });
 

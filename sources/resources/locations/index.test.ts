@@ -39,7 +39,7 @@ describe("locations command (registry-derived)", () => {
 
   it("requires a subcommand", async () => {
     const ctx = proxyContext(() => Response.json({}));
-    await expectError(locationsCommand.run([], ctx), "Missing subcommand. Use recent or current.");
+    await expectError(locationsCommand.run([], ctx), "Missing subcommand. Use clusters, recent, or current.");
   });
 
   it("rejects an unknown subcommand", async () => {
@@ -47,27 +47,27 @@ describe("locations command (registry-derived)", () => {
     await expectError(locationsCommand.run(["wat"], ctx), "Unknown locations subcommand: wat");
   });
 
-  it("rejects a bad --limit on recent", async () => {
+  it("rejects a bad --limit on clusters", async () => {
     const ctx = proxyContext(() => Response.json({}));
     await expectError(
-      locationsCommand.run(["recent", "--limit", "0"], ctx),
+      locationsCommand.run(["clusters", "--limit", "0"], ctx),
       "--limit must be a positive integer"
     );
   });
 
-  it("rejects --limit without a value on recent", async () => {
+  it("rejects --limit without a value on clusters", async () => {
     const ctx = proxyContext(() => Response.json({}));
-    await expectError(locationsCommand.run(["recent", "--limit"], ctx), "--limit requires a value");
+    await expectError(locationsCommand.run(["clusters", "--limit"], ctx), "--limit requires a value");
   });
 
-  it("rejects an unknown option on recent", async () => {
+  it("rejects an unknown option on clusters", async () => {
     const ctx = proxyContext(() => Response.json({}));
-    await expectError(locationsCommand.run(["recent", "--nope"], ctx), "Unknown option: --nope");
+    await expectError(locationsCommand.run(["clusters", "--nope"], ctx), "Unknown option: --nope");
   });
 
-  it("rejects unexpected positionals on recent", async () => {
+  it("rejects unexpected positionals on clusters", async () => {
     const ctx = proxyContext(() => Response.json({}));
-    await expectError(locationsCommand.run(["recent", "extra"], ctx), "Unexpected arguments: extra");
+    await expectError(locationsCommand.run(["clusters", "extra"], ctx), "Unexpected arguments: extra");
   });
 
   it("rejects unexpected positionals on current", async () => {
@@ -77,7 +77,7 @@ describe("locations command (registry-derived)", () => {
 
   // ---- success paths --------------------------------------------------------
 
-  it("requests recent clusters with the released params and defaults", async () => {
+  it("requests clusters with default params (no min_visits unless overridden)", async () => {
     let seenUrl = "";
     const ctx = proxyContext((request) => {
       seenUrl = new URL(request.url).pathname + new URL(request.url).search;
@@ -85,7 +85,7 @@ describe("locations command (registry-derived)", () => {
     });
     const { logs, restore } = captureLog();
     try {
-      await locationsCommand.run(["recent", "--json"], ctx);
+      await locationsCommand.run(["clusters", "--json"], ctx);
     } finally {
       restore();
     }
@@ -93,7 +93,7 @@ describe("locations command (registry-derived)", () => {
     expect(JSON.parse(logs.join("\n"))).toEqual({ clusters: [], timezone: null });
   });
 
-  it("passes --limit and --visits through to the cluster request", async () => {
+  it("passes --limit, --visits, and --min-visits through to the cluster request", async () => {
     let seenUrl = "";
     const ctx = proxyContext((request) => {
       seenUrl = new URL(request.url).search;
@@ -101,11 +101,41 @@ describe("locations command (registry-derived)", () => {
     });
     const { restore } = captureLog();
     try {
-      await locationsCommand.run(["recent", "--limit", "5", "--visits", "--json"], ctx);
+      await locationsCommand.run(["clusters", "--limit", "5", "--visits", "--min-visits", "1", "--json"], ctx);
     } finally {
       restore();
     }
-    expect(seenUrl).toBe("?limit=5&include_visits=true");
+    expect(seenUrl).toBe("?limit=5&include_visits=true&min_visits=1");
+  });
+
+  it("requests the recent visit feed with default limit and no range", async () => {
+    let seenUrl = "";
+    const ctx = proxyContext((request) => {
+      seenUrl = new URL(request.url).pathname + new URL(request.url).search;
+      return Response.json({ visits: [], from: 0, to: 0, timezone: "UTC" });
+    });
+    const { restore } = captureLog();
+    try {
+      await locationsCommand.run(["recent", "--json"], ctx);
+    } finally {
+      restore();
+    }
+    expect(seenUrl).toBe("/v1/locations/recent?limit=20");
+  });
+
+  it("passes --from, --to, and --limit through to the recent feed", async () => {
+    let seenUrl = "";
+    const ctx = proxyContext((request) => {
+      seenUrl = new URL(request.url).search;
+      return Response.json({ visits: [], from: 0, to: 0, timezone: "UTC" });
+    });
+    const { restore } = captureLog();
+    try {
+      await locationsCommand.run(["recent", "--from", "2026-06-01", "--to", "2026-06-05", "--limit", "5", "--json"], ctx);
+    } finally {
+      restore();
+    }
+    expect(seenUrl).toBe("?limit=5&from=2026-06-01&to=2026-06-05");
   });
 
   it("requests the current location endpoint", async () => {

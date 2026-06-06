@@ -116,18 +116,20 @@ const listDaily: ActionDefinition<DailyListInput> = {
       const path = suffix ? `/v1/daily?${suffix}` : "/v1/daily";
       return { kind: "json", data: parseJson(await apiGet(ctx, path)) };
     }
-    // MCP: clamp page to max(limit,30), filter by date range, project to
-    // {daily_summaries, timezone}.
-    const data = parseJson(await apiGet(ctx, `/v1/daily?limit=${Math.max(input.limit, 30)}`));
+    // MCP: the server filters /v1/daily by its DATE column via from/to, so a
+    // single page (limited to max) returns the in-range summaries directly — no
+    // client-side scanning or in-memory date filtering needed.
     const { startDate, endDate, limit: max } = input;
-    const summaries = arrayProp(data, "daily_summaries")
-      .filter((item) => {
-        const key = itemDay(item);
-        return (!startDate || (key !== null && key >= startDate)) &&
-          (!endDate || (key !== null && key <= endDate));
-      })
-      .slice(0, max);
-    return { kind: "json", data: { daily_summaries: summaries, timezone: asRecord(data).timezone ?? null } };
+    const params = new URLSearchParams({ limit: String(max) });
+    if (startDate) {
+      params.set("from", startDate);
+    }
+    if (endDate) {
+      params.set("to", endDate);
+    }
+    const data = asRecord(parseJson(await apiGet(ctx, `/v1/daily?${params.toString()}`)));
+    const summaries = arrayProp(data, "daily_summaries").slice(0, max);
+    return { kind: "json", data: { daily_summaries: summaries, timezone: data["timezone"] ?? null } };
   },
 };
 
@@ -246,8 +248,14 @@ const findDaily: ActionDefinition<DailyFindInput> = {
       return { kind: "json", data: parseJson(await apiGet(ctx, `/v1/daily/${input.id}`)) };
     }
     const date = input.date as string;
-    const data = parseJson(await apiGet(ctx, "/v1/daily?limit=100"));
-    const match = arrayProp(data, "daily_summaries").find((item) => itemDay(item) === date);
+    // The server filters /v1/daily by its DATE column, so from=to=<date> returns
+    // only the target day — a single page, no scanning.
+    const params = new URLSearchParams({ from: date, to: date, limit: "100" });
+    const items = arrayProp(
+      asRecord(parseJson(await apiGet(ctx, `/v1/daily?${params.toString()}`))),
+      "daily_summaries"
+    );
+    const match = items.find((item) => itemDay(item) === date);
     if (!match) {
       return { kind: "json", data: { date, dailySummary: null } };
     }
