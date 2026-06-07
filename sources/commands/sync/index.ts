@@ -4,7 +4,7 @@ import type { Command, CommandContext } from "@/commands/types";
 import { requestClientJson } from "@/client/clientApi";
 
 const USAGE =
-  "bee sync [--output <dir>] [--only <facts|todos|daily|conversations>]";
+  "bee sync [--output <dir>] [--recent-days N] [--only <facts|todos|daily|conversations>]";
 
 const DEFAULT_OUTPUT_DIR = "bee-sync";
 const PAGE_SIZE = 100;
@@ -115,6 +115,7 @@ type SyncTarget = "facts" | "todos" | "daily" | "conversations";
 type SyncOptions = {
   outputDir: string;
   targets: Set<SyncTarget>;
+  recentDays: number | undefined;
 };
 
 export const syncCommand: Command = {
@@ -274,12 +275,27 @@ class ProgressTask {
 
 function parseSyncArgs(args: readonly string[]): SyncOptions {
   let outputDir = DEFAULT_OUTPUT_DIR;
+  let recentDays: number | undefined;
   const onlyTargets: SyncTarget[] = [];
   const positionals: string[] = [];
 
   for (let i = 0; i < args.length; i += 1) {
     const arg = args[i];
     if (arg === undefined) {
+      continue;
+    }
+
+    if (arg === "--recent-days") {
+      const value = args[i + 1];
+      if (value === undefined) {
+        throw new Error("--recent-days requires a value");
+      }
+      const parsed = Number.parseInt(value, 10);
+      if (!Number.isFinite(parsed) || parsed <= 0) {
+        throw new Error("--recent-days must be a positive integer");
+      }
+      recentDays = parsed;
+      i += 1;
       continue;
     }
 
@@ -316,7 +332,16 @@ function parseSyncArgs(args: readonly string[]): SyncOptions {
   }
 
   const targets = resolveTargets(onlyTargets);
-  return { outputDir, targets };
+  return { outputDir, targets, recentDays };
+}
+
+// Returns the YYYY-MM-DD that is (days - 1) calendar days before today, i.e. the
+// inclusive start of a window covering the last `days` days. Used as the server
+// `from` filter so daily summaries and conversations are scoped server-side.
+function recentDaysFrom(days: number): string {
+  const start = new Date();
+  start.setUTCDate(start.getUTCDate() - (days - 1));
+  return start.toISOString().slice(0, 10);
 }
 
 function parseTargets(value: string): SyncTarget[] {
@@ -368,6 +393,10 @@ async function syncAll(
   const progress = new MultiProgress();
   await mkdir(options.outputDir, { recursive: true });
 
+  // When --recent-days is set, scope daily summaries and conversations to that
+  // window via the server `from` filter; facts and todos are always synced fully.
+  const from = options.recentDays !== undefined ? recentDaysFrom(options.recentDays) : undefined;
+
   const syncPromises: Promise<void>[] = [];
 
   if (options.targets.has("facts")) {
@@ -382,12 +411,12 @@ async function syncAll(
 
   if (options.targets.has("daily")) {
     const task = progress.addTask("daily");
-    syncPromises.push(syncDaily(context, options.outputDir, task));
+    syncPromises.push(syncDaily(context, options.outputDir, task, from));
   }
 
   if (options.targets.has("conversations")) {
     const task = progress.addTask("conversations");
-    syncPromises.push(syncConversations(context, options.outputDir, task));
+    syncPromises.push(syncConversations(context, options.outputDir, task, from));
   }
 
   const results = await Promise.allSettled(syncPromises);
@@ -433,9 +462,10 @@ async function syncTodos(
 async function syncDaily(
   context: CommandContext,
   outputDir: string,
-  task: ProgressTask
+  task: ProgressTask,
+  from?: string
 ): Promise<void> {
-  const dailySummaries = await fetchAllDailySummaries(context, task);
+  const dailySummaries = await fetchAllDailySummaries(context, task, from);
   const dailyDir = path.join(outputDir, "daily");
   await mkdir(dailyDir, { recursive: true });
 
@@ -480,9 +510,10 @@ async function syncDaily(
 async function syncConversations(
   context: CommandContext,
   outputDir: string,
-  task: ProgressTask
+  task: ProgressTask,
+  from?: string
 ): Promise<void> {
-  const conversations = await fetchAllConversations(context, task);
+  const conversations = await fetchAllConversations(context, task, from);
   const conversationsDir = path.join(outputDir, "conversations");
   await mkdir(conversationsDir, { recursive: true });
 
@@ -636,7 +667,8 @@ async function fetchAllTodos(
 
 async function fetchAllDailySummaries(
   context: CommandContext,
-  task: ProgressTask
+  task: ProgressTask,
+  from?: string
 ): Promise<DailySummary[]> {
   const items: DailySummary[] = [];
   let cursor: string | undefined;
@@ -645,6 +677,9 @@ async function fetchAllDailySummaries(
   while (true) {
     const params = new URLSearchParams();
     params.set("limit", String(PAGE_SIZE));
+    if (from) {
+      params.set("from", from);
+    }
     if (cursor) {
       params.set("cursor", cursor);
     }
@@ -665,7 +700,8 @@ async function fetchAllDailySummaries(
 
 async function fetchAllConversations(
   context: CommandContext,
-  task: ProgressTask
+  task: ProgressTask,
+  from?: string
 ): Promise<ConversationSummary[]> {
   const items: ConversationSummary[] = [];
   let cursor: string | undefined;
@@ -674,6 +710,9 @@ async function fetchAllConversations(
   while (true) {
     const params = new URLSearchParams();
     params.set("limit", String(PAGE_SIZE));
+    if (from) {
+      params.set("from", from);
+    }
     if (cursor) {
       params.set("cursor", cursor);
     }
