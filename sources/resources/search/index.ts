@@ -51,7 +51,7 @@ const searchAction: ActionDefinition<SearchInput> = {
   mcp: {
     name: "bee_search",
     description:
-      "Search Bee ambient wearable context server-side. Conversations, daily summaries, and facts are searched server-side via a BM25 keyword index (use the filter argument to scope). Set mode to 'semantic' for neural search over conversations only (filter and sortBy do not apply in semantic mode). Todos and insights are NOT searchable here; use bee_list_todos and bee_get_insights instead. Returns the server response verbatim. Use for questions about what the user discussed, heard, did, or captured.",
+      "Search Bee ambient wearable context server-side. Conversations, daily summaries, and facts are searched server-side via a BM25 keyword index (use the filter argument to scope). Set mode to 'semantic' for neural search over conversations only (filter and sortBy do not apply in semantic mode). Optionally bound results by time with since/until (epoch milliseconds), in either mode. Todos and insights are NOT searchable here; use bee_list_todos and bee_get_insights instead. Returns the server response verbatim. Use for questions about what the user discussed, heard, did, or captured.",
     inputSchema: objectSchema({
       properties: {
         query: querySchema,
@@ -68,6 +68,16 @@ const searchAction: ActionDefinition<SearchInput> = {
           ["keyword", "semantic"],
           "'keyword' for BM25 search (default), 'semantic' for neural search over conversations only."
         ),
+        since: {
+          type: "number",
+          description:
+            "Only return items at or after this time (epoch milliseconds). Applies to both keyword and semantic modes.",
+        },
+        until: {
+          type: "number",
+          description:
+            "Only return items at or before this time (epoch milliseconds). Applies to both keyword and semantic modes.",
+        },
       },
       required: ["query"],
     }),
@@ -159,13 +169,24 @@ function coerceMcpInput(raw: { readonly [key: string]: unknown }): SearchInput {
   const filter = filterArg(raw["filter"]);
   const sortBy = sortByArg(raw["sortBy"]);
   const mode = modeArg(raw["mode"]);
-  return {
-    mode,
-    query,
-    keyword: { limit, filter, sortBy },
-    // semantic (neural) MCP body carries the defaulted limit.
-    neural: { limit },
-  };
+  const since = optionalEpochArg(raw["since"], "since");
+  const until = optionalEpochArg(raw["until"], "until");
+  const keyword: SearchInput["keyword"] = { limit, filter, sortBy };
+  if (since !== undefined) {
+    keyword.since = since;
+  }
+  if (until !== undefined) {
+    keyword.until = until;
+  }
+  // semantic (neural) MCP body carries the defaulted limit plus any date bounds.
+  const neural: SearchInput["neural"] = { limit };
+  if (since !== undefined) {
+    neural.since = since;
+  }
+  if (until !== undefined) {
+    neural.until = until;
+  }
+  return { mode, query, keyword, neural };
 }
 
 // CLI search: the argv parser already validated --query (non-empty) and --limit
@@ -290,6 +311,18 @@ function parseEpoch(value: unknown, flag: string): number | undefined {
     throw new Error(`${flag} must be a valid epoch timestamp`);
   }
   return parsed;
+}
+
+// MCP since/until coercer: lenient, mirrors the CLI parseEpoch contract but
+// keyed by argument name. Absent -> undefined; present must be a finite number.
+function optionalEpochArg(value: unknown, name: string): number | undefined {
+  if (value === undefined || value === null) {
+    return undefined;
+  }
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    throw new Error(`${name} must be a finite epoch timestamp (milliseconds).`);
+  }
+  return value;
 }
 
 // mode coercer kept local so the search domain owns its only enum.

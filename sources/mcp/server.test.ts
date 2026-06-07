@@ -245,6 +245,35 @@ describe("MCP server", () => {
     expect(post?.body).toEqual({ query: "coffee", limit: 7 });
   });
 
+  it("bee_search (keyword) forwards since/until on the keyword body", async () => {
+    const captured: CapturedRequest[] = [];
+    await callTool(
+      "bee_search",
+      { query: "coffee", since: 1000, until: 2000 },
+      capturingContext(captured, { results: [] })
+    );
+    const post = captured.find((entry) => entry.path === "/v1/search/conversations");
+    expect(post?.body).toEqual({
+      query: "coffee",
+      limit: 20,
+      filter: "all",
+      sortBy: "relevance",
+      since: 1000,
+      until: 2000,
+    });
+  });
+
+  it("bee_search semantic mode forwards since/until on the neural body", async () => {
+    const captured: CapturedRequest[] = [];
+    await callTool(
+      "bee_search",
+      { query: "coffee", mode: "semantic", since: 1000, until: 2000 },
+      capturingContext(captured, { results: [], total: 0, timezone: "UTC" })
+    );
+    const post = captured.find((entry) => entry.path === "/v1/search/conversations/neural");
+    expect(post?.body).toEqual({ query: "coffee", limit: 20, since: 1000, until: 2000 });
+  });
+
   it("bee_search_facts POSTs /v1/search/conversations with filter 'facts'", async () => {
     const captured: CapturedRequest[] = [];
     await callTool("bee_search_facts", { query: "allergy" }, capturingContext(captured, { results: [] }));

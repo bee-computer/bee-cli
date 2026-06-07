@@ -19,7 +19,7 @@ export const TOOL_SNAPSHOT: ToolDefinition[] = [
   },
   {
     "name": "bee_search",
-    "description": "Search Bee ambient wearable context server-side. Conversations, daily summaries, and facts are searched server-side via a BM25 keyword index (use the filter argument to scope). Set mode to 'semantic' for neural search over conversations only (filter and sortBy do not apply in semantic mode). Todos and insights are NOT searchable here; use bee_list_todos and bee_get_insights instead. Returns the server response verbatim. Use for questions about what the user discussed, heard, did, or captured.",
+    "description": "Search Bee ambient wearable context server-side. Conversations, daily summaries, and facts are searched server-side via a BM25 keyword index (use the filter argument to scope). Set mode to 'semantic' for neural search over conversations only (filter and sortBy do not apply in semantic mode). Optionally bound results by time with since/until (epoch milliseconds), in either mode. Todos and insights are NOT searchable here; use bee_list_todos and bee_get_insights instead. Returns the server response verbatim. Use for questions about what the user discussed, heard, did, or captured.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -60,6 +60,14 @@ export const TOOL_SNAPSHOT: ToolDefinition[] = [
             "semantic"
           ],
           "description": "'keyword' for BM25 search (default), 'semantic' for neural search over conversations only."
+        },
+        "since": {
+          "type": "number",
+          "description": "Only return items at or after this time (epoch milliseconds). Applies to both keyword and semantic modes."
+        },
+        "until": {
+          "type": "number",
+          "description": "Only return items at or before this time (epoch milliseconds). Applies to both keyword and semantic modes."
         }
       },
       "required": [

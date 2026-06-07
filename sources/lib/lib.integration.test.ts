@@ -75,6 +75,70 @@ describe("lib integration", () => {
   );
 
   it(
+    "search builds keyword args including filter/sort/since/until",
+    async () => {
+      const runner = createNodeRunner(
+        'console.log(JSON.stringify({ argv: process.argv.slice(1) }));'
+      );
+      const api = createDataApi(runner);
+
+      const result = (await api.search({
+        query: "coffee",
+        limit: 5,
+        filter: "conversations",
+        sort: "mostRecent",
+        since: 1000,
+        until: 2000,
+      })) as { argv: string[] };
+
+      expect(result.argv).toEqual([
+        "search",
+        "--query",
+        "coffee",
+        "--limit",
+        "5",
+        "--since",
+        "1000",
+        "--until",
+        "2000",
+        "--filter",
+        "conversations",
+        "--sort",
+        "mostRecent",
+        "--json",
+      ]);
+    },
+    TEST_TIMEOUT_MS
+  );
+
+  it(
+    "search omits filter/sort in neural mode",
+    async () => {
+      const runner = createNodeRunner(
+        'console.log(JSON.stringify({ argv: process.argv.slice(1) }));'
+      );
+      const api = createDataApi(runner);
+
+      const result = (await api.search({
+        query: "coffee",
+        neural: true,
+        since: 1000,
+      })) as { argv: string[] };
+
+      expect(result.argv).toEqual([
+        "search",
+        "--query",
+        "coffee",
+        "--since",
+        "1000",
+        "--neural",
+        "--json",
+      ]);
+    },
+    TEST_TIMEOUT_MS
+  );
+
+  it(
     "sse stream yields json lines",
     async () => {
       const runner = createNodeRunner(
