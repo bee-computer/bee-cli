@@ -7,7 +7,7 @@
 
 <div align="center">
 
-[🌐 **Website**](https://bee.computer) • [📱 **iOS App**](https://apps.apple.com/us/app/bee-your-personal-ai/id6480349491) • 🤖 **Android Coming Soon** • [🧩 **Agent Skill**](https://github.com/bee-computer/bee-skill)
+[🌐 **Website**](https://bee.computer) • [📱 **iOS App**](https://apps.apple.com/us/app/bee-your-personal-ai/id6480349491) • [🤖 **Android App**](https://play.google.com/store/apps/details?id=com.bee.android&hl=en_US) • [🧩 **Agent Skill**](https://github.com/bee-computer/bee-skill)
 
 </div>
 
