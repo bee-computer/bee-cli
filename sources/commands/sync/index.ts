@@ -8,7 +8,7 @@ import type { Environment } from "@/environment";
 import { loadToken } from "@/secureStore";
 
 const USAGE =
-  "bee sync [--output <dir>] [--recent-days N] [--full] [--only <facts|todos|daily|conversations>]";
+  "bee sync [--output <dir>] [--recent-days N] [--full] [--since <epochMs>] [--only <facts|todos|daily|conversations>]";
 
 const DEFAULT_OUTPUT_DIR = "bee-sync";
 const PAGE_SIZE = 100;
