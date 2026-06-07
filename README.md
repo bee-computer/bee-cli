@@ -37,6 +37,32 @@ The Bee CLI exports your personal data as markdown files, making it available to
 - **Backup**: Keep a portable, offline copy of your Bee data
 - **Custom integrations**: Build workflows with your conversation history, facts, and todos
 
+## Use Bee with AI assistants (MCP)
+
+The Bee CLI is also a [Model Context Protocol](https://modelcontextprotocol.io) server, so assistants like Claude and Codex can read your Bee context — search conversations, look up facts and todos, fetch daily summaries — directly, with your data staying on your machine.
+
+Connect it to a client in one step:
+
+```bash
+bee mcp connect claude          # Claude Desktop (one-click install)
+bee mcp connect claude-code     # Claude Code (CLI)
+bee mcp connect codex           # Codex
+bee mcp status                  # show what's connected
+bee mcp disconnect claude-code  # remove
+```
+
+The server authenticates with your existing Bee login — no extra tokens to manage. To run it yourself (for another MCP client, or to debug), use one of the transports directly:
+
+```bash
+bee mcp serve                   # stdio JSON-RPC (what the connectors launch)
+bee mcp serve-http [--port N]   # local HTTP, 127.0.0.1, bearer-token auth
+```
+
+> [!NOTE]
+> `serve-http` binds to localhost only and requires an auth token, supplied with `--token` or the `BEE_MCP_HTTP_TOKEN` environment variable (at least 32 characters). Clients send it as `Authorization: Bearer <token>`.
+
+Every read, search, and manage capability below is exposed as an MCP tool (`bee_search`, `bee_list_facts`, `bee_get_daily_summary`, …), so the CLI and your assistant work from the same data.
+
 ## Installation
 
 Install from npm:
@@ -75,15 +101,17 @@ for await (const event of stream.events) {
 
 By default, data commands return markdown. Use `--json` to print raw JSON.
 
-- `login` - Log in interactively, with `--token <token>` / `--token-stdin`, or via proxy with `--proxy <url|socket>`.
+- `login` - Log in interactively, with `--token <token>` / `--token-stdin`, or via proxy with `--proxy <url|socket>`. Use `--no-wait` to print the authentication link and exit immediately instead of polling for approval (useful for agents/automation; finish later with `bee status` or by re-running `bee login`).
 - `status` - Show current authentication status.
 - `logout` - Log out and clear stored credentials.
 
 - `me` - Fetch your user profile. Use `--json` for JSON output.
 
-- `today` - Fetch today's brief (calendar events and emails). Use `--json` for JSON output.
+- `today` - Fetch today's brief (calendar events and emails). Use `--context` for Bee wearable context (daily summary, active todos, notes, conversations) instead, and `--json` for JSON output.
 
 - `now` - Fetch conversations from the last 10 hours with utterances. Use `--json` for JSON output.
+
+- `activity` - Show recent activity across conversations, summaries, notes, todos, and insights. Options: `--limit N`, `--json`.
 
 - `changed` - Fetch recent changes (defaults to last 24 hours). Use `--cursor <cursor>` and `--json` for JSON output.
 
@@ -95,30 +123,54 @@ By default, data commands return markdown. Use `--json` to print raw JSON.
   - `facts create --text <text>` - Create a new fact. Options: `--json`.
   - `facts update <id> --text <text>` - Update a fact. Options: `--confirmed <true|false>`, `--json`.
   - `facts delete <id>` - Delete a fact. Options: `--json`.
+  - `facts search --query <text>` - Search saved facts. Options: `--limit N`, `--json`.
 
 - `todos` - Manage your todos.
   - `todos list` - List todos. Options: `--limit N`, `--cursor <cursor>`, `--json`.
   - `todos get <id>` - Get a specific todo. Options: `--json`.
   - `todos create --text <text>` - Create a new todo. Options: `--alarm-at <iso>`, `--json`.
   - `todos update <id>` - Update a todo. Options: `--text <text>`, `--completed <true|false>`, `--alarm-at <iso>`, `--clear-alarm`, `--json`.
+  - `todos complete <id>` - Mark a todo complete. Options: `--json`.
   - `todos delete <id>` - Delete a todo. Options: `--json`.
+  - `todos suggestions` - List pending Bee-suggested todos. Options: `--limit N`, `--json`.
+  - `todos accept-suggestion <id>` - Accept a suggested todo, turning it into a real todo. Options: `--json`.
+  - `todos dismiss-suggestion <id>` - Dismiss a suggested todo. Options: `--json`.
 
 - `conversations` - Access your recorded conversations.
   - `conversations list` - List conversations. Options: `--limit N`, `--cursor <cursor>`, `--json`.
   - `conversations get <id>` - Get a specific conversation with full transcript. Options: `--json`.
+  - `conversations transcript <id>` - Get just the transcript utterances. Options: `--json`.
+  - `conversations related <id>` - Find conversations related to one. Options: `--limit N`, `--json`.
 
 - `daily` - Access daily summaries of your activity.
-  - `daily list` - List daily summaries. Options: `--limit N`, `--json`.
+  - `daily list` - List daily summaries. Options: `--limit N`, `--cursor <cursor>`, `--json`.
   - `daily get <id>` - Get a specific daily summary. Options: `--json`.
+  - `daily find <YYYY-MM-DD>` - Find the daily summary for a date. Options: `--json`.
 
 - `journals` - Access your journals.
   - `journals list` - List journals. Options: `--limit N`, `--cursor <cursor>`, `--json`.
   - `journals get <id>` - Get a specific journal. Options: `--json`.
+  - `journals search --query <text>` - Search voice notes / journal entries. Options: `--limit N`, `--json`.
 
-- `search` - Search your data.
-  - `search conversations --query <text>` - Search conversations. Options: `--limit N`, `--cursor <cursor>`, `--json`.
+- `insights` - Access Bee's insights about you.
+  - `insights list` - List recent insights. Options: `--limit N`, `--cursor <cursor>`, `--json`.
+  - `insights get <id>` - Get a specific insight. Options: `--json`.
 
-- `sync` - Export your Bee data to markdown files for AI agents. Options: `--output <dir>`, `--recent-days N`, `--only <facts|todos|daily|conversations>`.
+- `locations` - Access where you've been.
+  - `locations clusters` - Show places grouped by visit frequency. Options: `--limit N`, `--min-visits N`, `--visits`, `--json`.
+  - `locations recent` - Show recent individual visits. Options: `--from <date>`, `--to <date>`, `--limit N`, `--json`.
+  - `locations current` - Show your latest known location. Options: `--json`.
+
+- `photos` - Access photos synced from your photo gallery.
+  - `photos list` - List photos, newest first. Options: `--daily-id N`, `--date YYYY-MM-DD`, `--limit N`, `--json`.
+  - `photos get <id>` - Download one photo. Options: `--output <path>`, `--json`.
+
+- `search` - Search your Bee data.
+  - `search --query <text>` - Keyword search (default) across conversations, daily summaries, and facts. Scope with `--filter conversations|daily|facts|all` and order with `--sort relevance|mostRecent`. Use `--neural` for semantic conversation search (conversations only; `--filter`/`--sort` do not apply). Bound either mode by time with `--since`/`--until` (epoch milliseconds). Options: `--limit N`, `--json`.
+
+- `mcp` - Run or connect the MCP server (see [Use Bee with AI assistants](#use-bee-with-ai-assistants-mcp)). Subcommands: `serve`, `serve-http [--port N] [--token VALUE]`, `connect|disconnect <claude|claude-code|codex>`, `status`.
+
+- `sync` - Export your Bee data to markdown files for AI agents. Re-runs are incremental by default (only changed daily summaries/conversations are re-fetched). Options: `--output <dir>`, `--recent-days N`, `--only <facts|todos|daily|conversations>`, `--full`, `--since <epochMs>`.
 
 - `proxy` - Start a local Bee API proxy. Options: `--port N`, `--socket [path]`, `--idle-timeout SECONDS`.
 
@@ -336,6 +388,18 @@ Payload:
 }
 ```
 
+### journal-text
+
+Raw journal text streamed in (e.g. as a voice note is transcribed).
+
+Payload:
+```json
+{
+  "journalId": 55,
+  "text": "Optional raw text"
+}
+```
+
 ## Sync Command
 
 The `sync` command exports all your Bee data to a local directory as markdown files.
@@ -343,16 +407,25 @@ The `sync` command exports all your Bee data to a local directory as markdown fi
 ### Usage
 
 ```bash
-bee sync [--output <dir>] [--recent-days N] [--only <facts|todos|daily|conversations>]
+bee sync [--output <dir>] [--recent-days N] [--only <facts|todos|daily|conversations>] [--full] [--since <epochMs>]
 ```
+
+After a first sync, re-running `bee sync` on the same output directory is
+**incremental**: it re-fetches only the daily summaries and conversations that
+have changed since the last run (facts and todos are always re-fetched in full,
+since they are small). Sync state is tracked in a `.bee-sync.json` manifest
+inside the output directory; delete it (or the directory) to force a full
+re-sync.
 
 ### Options
 
 | Option | Default | Description |
 |--------|---------|-------------|
 | `--output <dir>` | `bee-sync` | Output directory for synced files |
-| `--recent-days N` | `3` | Number of recent days to sync with full conversation details |
-| `--only <targets>` | all | Limit sync to a comma-separated list: `facts`, `todos`, `daily`, `conversations` |
+| `--recent-days N` | all | Limit daily summaries and conversations to the last N days (facts and todos are always synced in full). Applies to full syncs only; ignored on an incremental run |
+| `--only <targets>` | all | Limit sync to a comma-separated list: `facts`, `todos`, `daily`, `conversations` (or `all`) |
+| `--full` | off | Force a complete re-sync, ignoring the saved manifest, and rewrite it with fresh cursors |
+| `--since <epochMs>` | — | Advanced/recovery: override the saved incremental cursor with an explicit epoch-milliseconds timestamp for changefeed-driven targets |
 
 ### Output Structure
 
@@ -360,13 +433,14 @@ bee sync [--output <dir>] [--recent-days N] [--only <facts|todos|daily|conversat
 bee-sync/
 ├── facts.md              # All facts (confirmed and pending)
 ├── todos.md              # All todos (open and completed)
-└── daily/
+├── daily/
+│   └── YYYY-MM-DD/       # One folder per day
+│       └── summary.md    # Daily summary
+└── conversations/
     └── YYYY-MM-DD/       # One folder per day
-        ├── summary.md    # Daily summary
-        └── conversations/
-            ├── 123.md    # Individual conversation files
-            ├── 456.md
-            └── ...
+        ├── 123.md        # Individual conversation files
+        ├── 456.md
+        └── ...
 ```
 
 ### File Formats
@@ -452,11 +526,11 @@ Summary of calendar events (if available).
 
 ## Conversations
 
-- 123 (2024-01-15T09:00:00.000Z - 2024-01-15T09:30:00.000Z) — Meeting with team (conversations/123.md)
-- 124 (2024-01-15T14:00:00.000Z - 2024-01-15T14:15:00.000Z) — Quick chat (conversations/124.md)
+- 123 (2024-01-15T09:00:00.000Z - 2024-01-15T09:30:00.000Z) — Meeting with team
+- 124 (2024-01-15T14:00:00.000Z - 2024-01-15T14:15:00.000Z) — Quick chat
 ```
 
-#### daily/YYYY-MM-DD/conversations/ID.md
+#### conversations/YYYY-MM-DD/ID.md
 
 Individual conversation transcripts with full details.
 
@@ -492,8 +566,8 @@ Detailed summary of what was discussed.
 ### Transcription 456
 - realtime: false
 
-- Speaker 1: Hello, how are you? (2024-01-15T09:00:00.000Z - 2024-01-15T09:00:05.000Z)
-- Speaker 2: I'm doing well, thanks! (2024-01-15T09:00:06.000Z - 2024-01-15T09:00:10.000Z)
+- Speaker 1: Hello, how are you?
+- Speaker 2: I'm doing well, thanks!
 ```
 
 Each conversation file includes:
@@ -501,7 +575,7 @@ Each conversation file includes:
 - Short and detailed summaries
 - Primary location with coordinates
 - Suggested links extracted from the conversation
-- Full transcription with speaker labels and timestamps
+- Full transcription with speaker labels
 
 ### Examples
 
@@ -517,7 +591,13 @@ Sync to a custom directory:
 bee sync --output ~/Documents/bee-backup
 ```
 
-Sync with more recent days for full details:
+Sync only specific data:
+
+```bash
+bee sync --only facts,todos
+```
+
+Limit daily summaries and conversations to the last 7 days:
 
 ```bash
 bee sync --recent-days 7
@@ -525,12 +605,12 @@ bee sync --recent-days 7
 
 ### Notes
 
-- The sync command fetches all facts, todos, and daily summaries
-- Conversations are fetched concurrently (4 at a time) for faster syncing
-- Recent days (controlled by `--recent-days`) get their conversations synced twice to ensure completeness
+- The first sync (or `--full`) fetches everything; facts and todos are always re-fetched in full
+- Re-runs are incremental: only daily summaries and conversations that changed since the last run are re-fetched, tracked via the `.bee-sync.json` manifest in the output directory
+- Conversations and daily summaries are fetched concurrently for faster syncing
 - All timestamps are in ISO 8601 format (UTC)
 - The output directory is created if it doesn't exist
-- Existing files are overwritten on subsequent syncs
+- Existing files for changed items are overwritten in place; deletes are not reconciled, so a local file for an item later deleted on the server remains until a `--full` re-sync into a fresh directory
 
 ## License
 

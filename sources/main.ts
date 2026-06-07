@@ -1,14 +1,19 @@
 import type { Command } from "@/commands/types";
+import { activityCommand } from "@/commands/activity";
 import { conversationsCommand } from "@/commands/conversations";
 import { dailyCommand } from "@/commands/daily";
 import { changedCommand } from "@/commands/changed";
 import { factsCommand } from "@/commands/facts";
+import { insightsCommand } from "@/commands/insights";
 import { journalsCommand } from "@/commands/journals";
+import { locationsCommand } from "@/commands/locations";
 import { loginCommand } from "@/commands/login";
 import { logoutCommand } from "@/commands/logout";
 import { meCommand } from "@/commands/me";
+import { mcpCommand } from "@/commands/mcp";
 import { nowCommand } from "@/commands/now";
 import { pingCommand } from "@/commands/ping";
+import { photosCommand } from "@/commands/photos";
 import { proxyCommand } from "@/commands/proxy";
 import { searchCommand } from "@/commands/search";
 import { statusCommand } from "@/commands/status";
@@ -25,15 +30,20 @@ const BIN = "bee";
 const commands = [
   loginCommand,
   logoutCommand,
+  mcpCommand,
   statusCommand,
+  activityCommand,
   todayCommand,
   nowCommand,
   changedCommand,
   conversationsCommand,
   dailyCommand,
   factsCommand,
+  insightsCommand,
   journalsCommand,
+  locationsCommand,
   meCommand,
+  photosCommand,
   searchCommand,
   streamCommand,
   syncCommand,

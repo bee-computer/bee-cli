@@ -30,13 +30,33 @@ type FactUpdateOptions = {
   confirmed?: boolean;
 };
 
-type SearchOptions = {
-  query: string;
-  limit?: number;
-  since?: number;
-  until?: number;
-  neural?: boolean;
-};
+type SearchFilter = "conversations" | "daily" | "facts" | "all";
+type SearchSort = "relevance" | "mostRecent";
+
+// Mirrors the `bee search` CLI contract:
+//  - keyword (default): filter/sort scope the BM25 search; since/until bound it.
+//  - neural (semantic): conversations only; filter/sort do not apply, so the CLI
+//    rejects them with --neural. The union forbids them at compile time.
+// since/until (epoch ms) are valid in BOTH modes.
+type SearchOptions =
+  | {
+      query: string;
+      limit?: number;
+      filter?: SearchFilter;
+      sort?: SearchSort;
+      since?: number;
+      until?: number;
+      neural?: false;
+    }
+  | {
+      query: string;
+      limit?: number;
+      neural: true;
+      since?: number;
+      until?: number;
+      filter?: never;
+      sort?: never;
+    };
 
 export type DataApi = {
   me: <T = unknown>() => Promise<T>;
@@ -174,6 +194,14 @@ export function createDataApi(runner: BeeCliRunner): DataApi {
       }
       if (options.neural) {
         args.push("--neural");
+      } else {
+        // Keyword-only scoping flags; the union forbids them alongside neural.
+        if (options.filter !== undefined) {
+          args.push("--filter", options.filter);
+        }
+        if (options.sort !== undefined) {
+          args.push("--sort", options.sort);
+        }
       }
       return runner.runJson(args);
     },
