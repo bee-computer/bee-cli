@@ -12,6 +12,7 @@
 //    integer." messages, so positionals are declared optional and validated in
 //    coerceInput; the registry still emits "Unexpected arguments: ..." for >1.
 import { printJson } from "@/client/clientApi";
+import { printToolData } from "@/commands/mcpToolOutput";
 import {
   formatDateValue,
   formatRecordMarkdown,
@@ -38,7 +39,11 @@ const USAGE = [
   "bee todos get <id> [--json]",
   "bee todos create --text <text> [--alarm-at <iso>] [--json]",
   "bee todos update <id> [--text <text>] [--completed <true|false>] [--alarm-at <iso> | --clear-alarm] [--json]",
+  "bee todos complete <id> [--json]",
   "bee todos delete <id> [--json]",
+  "bee todos suggestions [--limit N] [--json]",
+  "bee todos accept-suggestion <id> [--json]",
+  "bee todos dismiss-suggestion <id> [--json]",
 ].join("\n");
 
 type Todo = {
@@ -195,6 +200,17 @@ function parseCliId(value: unknown): number {
   const parsed = Number.parseInt(String(value), 10);
   if (!Number.isFinite(parsed) || parsed <= 0) {
     throw new Error("Todo id must be a positive integer.");
+  }
+  return parsed;
+}
+
+function parseCliSuggestionId(value: unknown): number {
+  if (value === undefined) {
+    throw new Error("Missing suggestion id.");
+  }
+  const parsed = Number.parseInt(String(value), 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    throw new Error("Suggestion id must be a positive integer.");
   }
   return parsed;
 }
@@ -475,7 +491,14 @@ const completeTodo: ActionDefinition<IdInput> = {
       additionalProperties: false,
     },
   },
-  coerceInput: (raw, surface) => ({ id: coerceRequiredId(raw["id"], surface) }),
+  cli: {
+    subcommand: "complete",
+    positionals: [{ name: "id", required: false }],
+    flags: [],
+    render: renderTodoDocument,
+  },
+  coerceInput: (raw, surface) =>
+    surface === "cli" ? { id: parseCliId(raw["id"]) } : { id: coerceRequiredId(raw["id"], surface) },
   run: async (ctx, input) => {
     return { kind: "json", data: parseJson(await apiPut(ctx, `/v1/todos/${input.id}`, { completed: true })) };
   },
@@ -507,7 +530,7 @@ const deleteTodo: ActionDefinition<IdInput> = {
   },
 };
 
-// ---- todo suggestions (MCP only) --------------------------------------------
+// ---- todo suggestions -------------------------------------------------------
 
 type SuggestionsInput = { limit: number };
 
@@ -521,7 +544,21 @@ const getTodoSuggestions: ActionDefinition<SuggestionsInput> = {
       additionalProperties: false,
     },
   },
-  coerceInput: (raw) => ({ limit: numberArg(raw["limit"], 20, 1, 50) }),
+  cli: {
+    subcommand: "suggestions",
+    flags: [{ name: "--limit", kind: "int", max: 50 }],
+    render: (result, format) => {
+      if (result.kind !== "json") {
+        return;
+      }
+      printToolData("Todo Suggestions", result.data, format);
+    },
+  },
+  coerceInput: (raw, surface) => ({
+    limit: surface === "cli"
+      ? (typeof raw["limit"] === "number" ? raw["limit"] : 20)
+      : numberArg(raw["limit"], 20, 1, 50),
+  }),
   run: async (ctx, input) => {
     const data = parseJson(await apiGet(ctx, "/v1/todoSuggestions"));
     const suggestions = arrayProp(data, "todoSuggestions").slice(0, input.limit);
@@ -540,7 +577,14 @@ const acceptTodoSuggestion: ActionDefinition<IdInput> = {
       additionalProperties: false,
     },
   },
-  coerceInput: (raw) => ({ id: requiredIdArg(raw["id"]) }),
+  cli: {
+    subcommand: "accept-suggestion",
+    positionals: [{ name: "id", required: false }],
+    flags: [],
+    render: renderTodoDocument,
+  },
+  coerceInput: (raw, surface) =>
+    surface === "cli" ? { id: parseCliSuggestionId(raw["id"]) } : { id: requiredIdArg(raw["id"]) },
   run: async (ctx, input) => {
     return {
       kind: "json",
@@ -560,7 +604,19 @@ const dismissTodoSuggestion: ActionDefinition<IdInput> = {
       additionalProperties: false,
     },
   },
-  coerceInput: (raw) => ({ id: requiredIdArg(raw["id"]) }),
+  cli: {
+    subcommand: "dismiss-suggestion",
+    positionals: [{ name: "id", required: false }],
+    flags: [],
+    render: (result, format) => {
+      if (result.kind !== "json") {
+        return;
+      }
+      printToolData("Dismiss Suggestion", result.data, format);
+    },
+  },
+  coerceInput: (raw, surface) =>
+    surface === "cli" ? { id: parseCliSuggestionId(raw["id"]) } : { id: requiredIdArg(raw["id"]) },
   run: async (ctx, input) => {
     return {
       kind: "json",

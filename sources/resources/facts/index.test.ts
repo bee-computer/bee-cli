@@ -49,11 +49,30 @@ describe("facts command (registry-derived)", () => {
     await expectError(factsCommand.run(["wat"], ctx), "Unknown facts subcommand: wat");
   });
 
-  // facts has NO `search` CLI subcommand (the released surface is frozen); the
-  // bee_search_facts tool is MCP-only.
-  it("rejects the search subcommand (not a released CLI verb)", async () => {
+  // facts search posts to /v1/search/conversations with filter=facts (same path
+  // as the bee_search_facts MCP tool).
+  it("search posts query + filter=facts to /v1/search/conversations", async () => {
+    let body: unknown;
+    const ctx = proxyContext(async (request) => {
+      const url = new URL(request.url);
+      expect(url.pathname).toBe("/v1/search/conversations");
+      expect(request.method).toBe("POST");
+      body = await request.json();
+      return Response.json({ results: [], timezone: "UTC" });
+    });
+    const logs: string[] = [];
+    const spy = spyOn(console, "log").mockImplementation((...a) => { logs.push(a.join(" ")); });
+    try {
+      await factsCommand.run(["search", "--query", "coffee", "--limit", "5", "--json"], ctx);
+    } finally {
+      spy.mockRestore();
+    }
+    expect(body).toEqual({ query: "coffee", limit: 5, filter: "facts" });
+  });
+
+  it("search requires a query", async () => {
     const ctx = proxyContext(() => Response.json({}));
-    await expectError(factsCommand.run(["search"], ctx), "Unknown facts subcommand: search");
+    await expectError(factsCommand.run(["search"], ctx), "Missing query. Provide --query.");
   });
 
   // ---- list -----------------------------------------------------------------

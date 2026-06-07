@@ -5,11 +5,12 @@
 // Surface divergence:
 //  - CLI `list` always sets confirmed=true|false; MCP bee_list_facts omits
 //    confirmed when includeUnconfirmed is true.
-//  - bee_search_facts is MCP-only; the `facts` CLI command has no search
-//    subcommand, so that action declares no cli block.
+//  - facts search and bee_search_facts both query the BM25 facts index via
+//    POST /v1/search/conversations with filter=facts.
 //  - bee_update_fact (MCP) fetches the existing text when text is omitted; the
 //    CLI `facts update` requires --text and never fetches.
 import { printJson } from "@/client/clientApi";
+import { printToolData } from "@/commands/mcpToolOutput";
 import type { JsonObject } from "@/mcp/types";
 import {
   coerceLimit,
@@ -38,6 +39,7 @@ import {
 
 const USAGE = [
   "bee facts list [--limit N] [--cursor <cursor>] [--unconfirmed] [--json]",
+  "bee facts search --query <text> [--limit N] [--json]",
   "bee facts get <id> [--json]",
   "bee facts create --text <text> [--json]",
   "bee facts update <id> --text <text> [--confirmed <true|false>] [--json]",
@@ -298,10 +300,37 @@ const searchFacts: ActionDefinition<FactsSearchInput> = {
       required: ["query"],
     }),
   },
-  coerceInput: (raw, surface) => ({
-    query: stringArg(raw["query"], "query"),
-    limit: coerceLimit(raw["limit"], surface, { fallback: 20, min: 1, max: 100 }),
-  }),
+  cli: {
+    subcommand: "search",
+    flags: [
+      { name: "--query", kind: "string" },
+      { name: "--limit", kind: "int", max: 100 },
+    ],
+    render: (result, format) => {
+      if (result.kind !== "json") {
+        return;
+      }
+      printToolData("Fact Search", result.data, format);
+    },
+  },
+  coerceInput: (raw, surface) => {
+    if (surface === "cli") {
+      // The argv parser rejects an empty/whitespace --query with "--query
+      // requires a value" before here; a wholly-absent flag lands here.
+      const value = typeof raw["query"] === "string" ? raw["query"] : undefined;
+      if (value === undefined) {
+        throw new Error("Missing query. Provide --query.");
+      }
+      return {
+        query: value,
+        limit: coerceLimit(raw["limit"], surface, { fallback: 20, min: 1, max: 100 }),
+      };
+    }
+    return {
+      query: stringArg(raw["query"], "query"),
+      limit: coerceLimit(raw["limit"], surface, { fallback: 20, min: 1, max: 100 }),
+    };
+  },
   run: async (ctx, input) => {
     const data = parseJson(
       await apiPost(ctx, "/v1/search/conversations", {
