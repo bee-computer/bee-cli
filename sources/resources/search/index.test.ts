@@ -113,19 +113,11 @@ describe("search command (registry-derived)", () => {
     );
   });
 
-  it("rejects --since without --neural", async () => {
+  it("rejects a non-numeric --since without --neural", async () => {
     const ctx = proxyContext(() => Response.json({}));
     await expectError(
-      searchCommand.run(["--query", "hi", "--since", "1000000000000"], ctx),
-      "--since and --until can only be used with --neural."
-    );
-  });
-
-  it("rejects --until without --neural", async () => {
-    const ctx = proxyContext(() => Response.json({}));
-    await expectError(
-      searchCommand.run(["--query", "hi", "--until", "1000000000000"], ctx),
-      "--since and --until can only be used with --neural."
+      searchCommand.run(["--query", "hi", "--since", "soon"], ctx),
+      "--since must be a valid epoch timestamp"
     );
   });
 
@@ -204,6 +196,35 @@ describe("search command (registry-derived)", () => {
       limit: 5,
       filter: "facts",
       sortBy: "mostRecent",
+    });
+  });
+
+  it("keyword search forwards --since/--until on the keyword body", async () => {
+    let captured: { path: string; body: unknown } | null = null;
+    const ctx = proxyContext(async (request) => {
+      const url = new URL(request.url);
+      captured = { path: url.pathname, body: await request.json() };
+      return Response.json({ results: [] });
+    });
+
+    const { restore } = captureLogs();
+    try {
+      await searchCommand.run(
+        ["--query", "coffee", "--since", "1000", "--until", "2000", "--json"],
+        ctx
+      );
+    } finally {
+      restore();
+    }
+
+    expect(captured!.path).toBe("/v1/search/conversations");
+    expect(captured!.body).toEqual({
+      query: "coffee",
+      limit: 20,
+      filter: "all",
+      sortBy: "relevance",
+      since: 1000,
+      until: 2000,
     });
   });
 

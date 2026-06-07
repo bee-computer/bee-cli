@@ -28,7 +28,7 @@ import {
 const LIMIT_MAX = 100;
 
 const USAGE = [
-  "bee search --query <text> [--limit N] [--json]",
+  "bee search --query <text> [--limit N] [--since <epochMs>] [--until <epochMs>] [--json]",
   "  keyword (default): [--filter conversations|daily|facts|all] [--sort relevance|mostRecent] [--scope conversations|all]",
   "  neural: --neural [--since <epochMs>] [--until <epochMs>]  (conversations only; keyword flags do not apply)",
 ].join("\n");
@@ -43,7 +43,7 @@ type SearchInput = {
   query: string;
   // Keyword/semantic body always carries a (defaulted) limit on the keyword
   // path; the CLI neural path leaves it optional (no default applied).
-  keyword: { limit: number; filter: SearchFilter; sortBy: SearchSort };
+  keyword: { limit: number; filter: SearchFilter; sortBy: SearchSort; since?: number; until?: number };
   neural: { limit?: number; since?: number; until?: number };
 };
 
@@ -124,14 +124,26 @@ const searchAction: ActionDefinition<SearchInput> = {
       const data = parseJson(await apiPost(ctx, "/v1/search/conversations/neural", body));
       return { kind: "json", data };
     }
-    const data = parseJson(
-      await apiPost(ctx, "/v1/search/conversations", {
-        query: input.query,
-        limit: input.keyword.limit,
-        filter: input.keyword.filter,
-        sortBy: input.keyword.sortBy,
-      })
-    );
+    const keywordBody: {
+      query: string;
+      limit: number;
+      filter: SearchFilter;
+      sortBy: SearchSort;
+      since?: number;
+      until?: number;
+    } = {
+      query: input.query,
+      limit: input.keyword.limit,
+      filter: input.keyword.filter,
+      sortBy: input.keyword.sortBy,
+    };
+    if (input.keyword.since !== undefined) {
+      keywordBody.since = input.keyword.since;
+    }
+    if (input.keyword.until !== undefined) {
+      keywordBody.until = input.keyword.until;
+    }
+    const data = parseJson(await apiPost(ctx, "/v1/search/conversations", keywordBody));
     return { kind: "json", data };
   },
 };
@@ -190,10 +202,6 @@ function coerceCliInput(raw: { readonly [key: string]: unknown }): SearchInput {
     throw new Error("Missing query. Provide --query.");
   }
 
-  if (!neural && (since !== undefined || until !== undefined)) {
-    throw new Error("--since and --until can only be used with --neural.");
-  }
-
   // Neural (semantic) search scopes to conversations only and orders by
   // relevance, so the keyword-only scoping flags do not apply.
   if (
@@ -226,14 +234,23 @@ function coerceCliInput(raw: { readonly [key: string]: unknown }): SearchInput {
   }
 
   // Keyword path: an omitted limit defaults to 20 and sortBy to "relevance".
+  // since/until (epoch ms) are optional createdAt range bounds forwarded to the
+  // keyword body only when provided, keeping the request byte-identical otherwise.
+  const keyword: SearchInput["keyword"] = {
+    limit: limit ?? 20,
+    filter: filter ?? "all",
+    sortBy: sortBy ?? "relevance",
+  };
+  if (since !== undefined) {
+    keyword.since = since;
+  }
+  if (until !== undefined) {
+    keyword.until = until;
+  }
   return {
     mode: "keyword",
     query,
-    keyword: {
-      limit: limit ?? 20,
-      filter: filter ?? "all",
-      sortBy: sortBy ?? "relevance",
-    },
+    keyword,
     neural: {},
   };
 }
