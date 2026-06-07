@@ -1803,3 +1803,16 @@ async function runWithConcurrency<T>(
 
   await Promise.all(runners);
 }
+
+// Internal helpers exposed for unit testing only. Not part of the public CLI
+// surface.
+export const __testing = {
+  parseSyncArgs,
+  readSyncManifest,
+  writeSyncManifest,
+  cursorEpochMs,
+  persistCursor,
+  accountFingerprint,
+  normalizeSinceCursor,
+  CHANGES_OVERLAP_MS,
+};
