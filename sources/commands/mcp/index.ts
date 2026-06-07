@@ -9,6 +9,7 @@ import {
   printMcpStatus,
 } from "@/mcp/claude";
 import { connectCodex, disconnectCodex, printCodexStatus } from "@/mcp/codex";
+import { requireClientToken } from "@/client/clientApi";
 
 const USAGE = [
   "bee mcp serve",
@@ -50,6 +51,13 @@ export const mcpCommand: Command = {
       const [target, ...rest] = remaining;
       if (rest.length > 0) {
         throw new Error(`Unexpected arguments: ${rest.join(" ")}`);
+      }
+      // The connected client launches the Bee MCP server, which authenticates
+      // with your stored Bee login. Fail early (with the standard message) if
+      // there is no login yet, rather than letting every tool call fail later
+      // inside the assistant. No-op in proxy mode, where auth is delegated.
+      if (target === "claude" || target === "claude-code" || target === "codex") {
+        await requireClientToken(context);
       }
       if (target === "claude") {
         await connectClaudeDesktop(context);
