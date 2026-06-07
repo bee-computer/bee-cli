@@ -1,10 +1,14 @@
-import { mkdir, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { existsSync, readFileSync } from "node:fs";
+import { mkdir, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { Command, CommandContext } from "@/commands/types";
 import { requestClientJson } from "@/client/clientApi";
+import type { Environment } from "@/environment";
+import { loadToken } from "@/secureStore";
 
 const USAGE =
-  "bee sync [--output <dir>] [--recent-days N] [--only <facts|todos|daily|conversations>]";
+  "bee sync [--output <dir>] [--recent-days N] [--full] [--only <facts|todos|daily|conversations>]";
 
 const DEFAULT_OUTPUT_DIR = "bee-sync";
 const PAGE_SIZE = 100;
@@ -12,6 +16,50 @@ const BATCH_DETAIL_SIZE = 100;
 const SYNC_CONCURRENCY = 4;
 const FALLBACK_TIMEZONE = "America/Los_Angeles";
 const DEFAULT_TIMEZONE = resolveDefaultTimezone();
+
+// Sync-state manifest constants. The manifest persists per-target changefeed
+// cursors so daily/conversations can sync incrementally. See the completeness
+// guarantee in the implementation plan.
+const MANIFEST_VERSION = 1 as const;
+const MANIFEST_FILENAME = ".bee-sync.json";
+// Subtracted from the changefeed `until` before persisting a cursor so that the
+// trailing window is re-scanned every run, defeating the commit-after-snapshot
+// race and cross-service clock skew. Over-scan is idempotent.
+const CHANGES_OVERLAP_MS = 600000; // 10 minutes
+// Cursors older than this take the full path before the server's 7-day floor can
+// reject them with cursor_too_old.
+const PROACTIVE_FULL_MS = 6 * 24 * 60 * 60 * 1000; // 6 days
+
+// Changefeed-driven targets carry a per-target cursor; facts/todos always full-refetch.
+type ChangefeedTarget = "daily" | "conversations";
+
+type SyncManifest = {
+  schemaVersion: typeof MANIFEST_VERSION;
+  env: Environment;
+  account: string;
+  cursors: {
+    daily?: string;
+    conversations?: string;
+  };
+  pending: {
+    daily: number[];
+    conversations: number[];
+  };
+  lastFullSyncAtMs: number;
+  lastSyncAtMs: number;
+};
+
+type ChangesResult = {
+  dailies: number[];
+  conversations: number[];
+  facts: number[];
+  todos: number[];
+  journals: string[];
+  since: number;
+  until: number;
+  updated: boolean;
+  next_cursor: string | null;
+};
 
 type Fact = {
   id: number;
@@ -116,6 +164,8 @@ type SyncOptions = {
   outputDir: string;
   targets: Set<SyncTarget>;
   recentDays: number | undefined;
+  full: boolean;
+  since: string | undefined;
 };
 
 export const syncCommand: Command = {
@@ -276,12 +326,29 @@ class ProgressTask {
 function parseSyncArgs(args: readonly string[]): SyncOptions {
   let outputDir = DEFAULT_OUTPUT_DIR;
   let recentDays: number | undefined;
+  let full = false;
+  let since: string | undefined;
   const onlyTargets: SyncTarget[] = [];
   const positionals: string[] = [];
 
   for (let i = 0; i < args.length; i += 1) {
     const arg = args[i];
     if (arg === undefined) {
+      continue;
+    }
+
+    if (arg === "--full") {
+      full = true;
+      continue;
+    }
+
+    if (arg === "--since") {
+      const value = args[i + 1];
+      if (value === undefined) {
+        throw new Error("--since requires a value");
+      }
+      since = value;
+      i += 1;
       continue;
     }
 
@@ -332,7 +399,7 @@ function parseSyncArgs(args: readonly string[]): SyncOptions {
   }
 
   const targets = resolveTargets(onlyTargets);
-  return { outputDir, targets, recentDays };
+  return { outputDir, targets, recentDays, full, since };
 }
 
 // Returns the YYYY-MM-DD that is (days - 1) calendar days before today, i.e. the
@@ -386,6 +453,239 @@ function isSyncTarget(value: string): value is SyncTarget {
   );
 }
 
+// ---------------------------------------------------------------------------
+// Sync-state manifest: read/validate, atomic write, cursor + account helpers
+// ---------------------------------------------------------------------------
+
+// A stable per-account fingerprint so re-authenticating as a different user
+// against the same output dir forces a full resync. Proxy clients carry no
+// token, so they share the "proxy" fingerprint. Token bytes are hashed, never
+// stored.
+async function accountFingerprint(context: CommandContext): Promise<string> {
+  if (context.client.isProxy) {
+    return "proxy";
+  }
+  const token = await loadToken(context.env);
+  if (!token) {
+    return "anonymous";
+  }
+  return createHash("sha256").update(token).digest("hex").slice(0, 16);
+}
+
+// Parse the embedded epoch (ms) from a "v1-<ms>" cursor. Returns null when the
+// cursor is not a usable v1 cursor.
+function cursorEpochMs(cursor: string): number | null {
+  if (!cursor.startsWith("v1-")) {
+    return null;
+  }
+  const raw = cursor.slice("v1-".length);
+  if (!/^\d+$/.test(raw)) {
+    return null;
+  }
+  const value = Number(raw);
+  return Number.isFinite(value) ? value : null;
+}
+
+function isUsableCursor(cursor: unknown): cursor is string {
+  return typeof cursor === "string" && cursorEpochMs(cursor) !== null;
+}
+
+function manifestPath(outputDir: string): string {
+  return path.join(outputDir, MANIFEST_FILENAME);
+}
+
+// Guarded read + validation. Returns null (⇒ full resync) when the manifest is
+// absent, unparseable, the wrong schema version, or does not match the current
+// env/account.
+function readSyncManifest(
+  outputDir: string,
+  env: Environment,
+  account: string
+): SyncManifest | null {
+  const file = manifestPath(outputDir);
+  if (!existsSync(file)) {
+    return null;
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(readFileSync(file, "utf8")) as unknown;
+  } catch {
+    return null;
+  }
+
+  if (!parsed || typeof parsed !== "object") {
+    return null;
+  }
+  const data = parsed as Partial<SyncManifest> & { cursors?: unknown; pending?: unknown };
+
+  if (data.schemaVersion !== MANIFEST_VERSION) {
+    return null;
+  }
+  if (data.env !== env) {
+    return null;
+  }
+  if (data.account !== account) {
+    return null;
+  }
+
+  const cursors = normalizeCursors(data.cursors);
+  const pending = normalizePending(data.pending);
+
+  return {
+    schemaVersion: MANIFEST_VERSION,
+    env,
+    account,
+    cursors,
+    pending,
+    lastFullSyncAtMs:
+      typeof data.lastFullSyncAtMs === "number" ? data.lastFullSyncAtMs : 0,
+    lastSyncAtMs: typeof data.lastSyncAtMs === "number" ? data.lastSyncAtMs : 0,
+  };
+}
+
+function normalizeCursors(value: unknown): SyncManifest["cursors"] {
+  const cursors: SyncManifest["cursors"] = {};
+  if (!value || typeof value !== "object") {
+    return cursors;
+  }
+  const record = value as { daily?: unknown; conversations?: unknown };
+  if (isUsableCursor(record.daily)) {
+    cursors.daily = record.daily;
+  }
+  if (isUsableCursor(record.conversations)) {
+    cursors.conversations = record.conversations;
+  }
+  return cursors;
+}
+
+function normalizePending(value: unknown): SyncManifest["pending"] {
+  const pending: SyncManifest["pending"] = { daily: [], conversations: [] };
+  if (!value || typeof value !== "object") {
+    return pending;
+  }
+  const record = value as { daily?: unknown; conversations?: unknown };
+  pending.daily = toIdArray(record.daily);
+  pending.conversations = toIdArray(record.conversations);
+  return pending;
+}
+
+function toIdArray(value: unknown): number[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value.filter((entry): entry is number => typeof entry === "number" && Number.isFinite(entry));
+}
+
+// Atomic write: serialize, write to a temp sibling, then rename over the target
+// (atomic on the same filesystem). A torn temp degrades safely to a full
+// resync on the next run.
+async function writeSyncManifest(
+  outputDir: string,
+  manifest: SyncManifest
+): Promise<void> {
+  const file = manifestPath(outputDir);
+  const tmp = `${file}.tmp`;
+  await writeFile(tmp, JSON.stringify(manifest, null, 2), "utf8");
+  await rename(tmp, file);
+}
+
+// Normalize a cursor for persistence: subtract the overlap margin so the next
+// run re-scans the trailing window.
+function persistCursor(until: number): string {
+  return `v1-${until - CHANGES_OVERLAP_MS}`;
+}
+
+// Normalize a user-supplied --since value (epoch ms or a v1-<ms> cursor) into a
+// v1 cursor.
+function normalizeSinceCursor(since: string): string | null {
+  if (isUsableCursor(since)) {
+    return since;
+  }
+  if (/^\d+$/.test(since)) {
+    return `v1-${Number(since)}`;
+  }
+  return null;
+}
+
+async function fetchChanges(
+  context: CommandContext,
+  cursor?: string
+): Promise<ChangesResult> {
+  const query = cursor ? `?cursor=${encodeURIComponent(cursor)}` : "";
+  const data = await requestClientJson(context, `/v1/changes${query}`, {
+    method: "GET",
+  });
+  return parseChangesResult(data);
+}
+
+// Ported from sources/commands/changed/index.ts:144-183.
+function parseChangesResult(payload: unknown): ChangesResult {
+  if (!payload || typeof payload !== "object") {
+    throw new Error("Invalid changes response.");
+  }
+  const data = payload as {
+    facts?: number[];
+    conversations?: number[];
+    dailies?: number[];
+    journals?: string[];
+    todos?: number[];
+    since?: number;
+    until?: number;
+    updated?: boolean;
+    next_cursor?: string | null;
+  };
+
+  if (
+    !Array.isArray(data.facts) ||
+    !Array.isArray(data.conversations) ||
+    !Array.isArray(data.dailies) ||
+    !Array.isArray(data.journals) ||
+    !Array.isArray(data.todos)
+  ) {
+    throw new Error("Invalid changes response.");
+  }
+
+  return {
+    facts: data.facts,
+    conversations: data.conversations,
+    dailies: data.dailies,
+    journals: data.journals,
+    todos: data.todos,
+    since: typeof data.since === "number" ? data.since : Date.now(),
+    until: typeof data.until === "number" ? data.until : Date.now(),
+    updated: data.updated === true,
+    next_cursor: typeof data.next_cursor === "string" ? data.next_cursor : null,
+  };
+}
+
+function isCursorRejection(error: unknown): boolean {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+  return error.message === "cursor_too_old" || error.message === "invalid_cursor";
+}
+
+function uniqueIds(...lists: readonly number[][]): number[] {
+  const seen = new Set<number>();
+  for (const list of lists) {
+    for (const id of list) {
+      seen.add(id);
+    }
+  }
+  return [...seen];
+}
+
+// Result of syncing one changefeed-driven target: whether its cursor may be
+// advanced this run and, if so, the value to advance to, plus the ids that
+// should be retained as pending retries.
+type TargetSyncOutcome = {
+  advanced: boolean;
+  nextCursor?: string;
+  pending: number[];
+  isFull: boolean;
+};
+
 async function syncAll(
   context: CommandContext,
   options: SyncOptions
@@ -393,11 +693,33 @@ async function syncAll(
   const progress = new MultiProgress();
   await mkdir(options.outputDir, { recursive: true });
 
-  // When --recent-days is set, scope daily summaries and conversations to that
-  // window via the server `from` filter; facts and todos are always synced fully.
-  const from = options.recentDays !== undefined ? recentDaysFrom(options.recentDays) : undefined;
+  const account = await accountFingerprint(context);
+  const manifest = readSyncManifest(options.outputDir, context.env, account);
+
+  // --recent-days only scopes a user-requested full sync (first run or --full).
+  // It is ignored on incremental and fallback-triggered full crawls.
+  const userFullFrom =
+    options.recentDays !== undefined ? recentDaysFrom(options.recentDays) : undefined;
+
+  // The seeded `until` for full-mode targets is captured from a no-cursor
+  // changefeed call made BEFORE any crawl, shared across full-mode targets.
+  let seedUntil: number | null = null;
+  let seedError: Error | null = null;
+  const ensureSeed = async (): Promise<number | null> => {
+    if (seedUntil !== null || seedError !== null) {
+      return seedUntil;
+    }
+    try {
+      const seed = await fetchChanges(context);
+      seedUntil = seed.until;
+    } catch (error) {
+      seedError = error instanceof Error ? error : new Error(String(error));
+    }
+    return seedUntil;
+  };
 
   const syncPromises: Promise<void>[] = [];
+  const outcomes: Partial<Record<ChangefeedTarget, TargetSyncOutcome>> = {};
 
   if (options.targets.has("facts")) {
     const task = progress.addTask("facts");
@@ -411,16 +733,50 @@ async function syncAll(
 
   if (options.targets.has("daily")) {
     const task = progress.addTask("daily");
-    syncPromises.push(syncDaily(context, options.outputDir, task, from));
+    syncPromises.push(
+      syncChangefeedTarget({
+        context,
+        options,
+        manifest,
+        target: "daily",
+        task,
+        userFullFrom,
+        ensureSeed,
+        full: (outputDir, t, from) => syncDaily(context, outputDir, t, from),
+        incremental: (outputDir, t, ids) => syncDailyByIds(context, outputDir, t, ids),
+      }).then((outcome) => {
+        outcomes.daily = outcome;
+      })
+    );
   }
 
   if (options.targets.has("conversations")) {
     const task = progress.addTask("conversations");
-    syncPromises.push(syncConversations(context, options.outputDir, task, from));
+    syncPromises.push(
+      syncChangefeedTarget({
+        context,
+        options,
+        manifest,
+        target: "conversations",
+        task,
+        userFullFrom,
+        ensureSeed,
+        full: (outputDir, t, from) => syncConversations(context, outputDir, t, from),
+        incremental: (outputDir, t, ids) =>
+          syncConversationsByIds(context, outputDir, t, ids),
+      }).then((outcome) => {
+        outcomes.conversations = outcome;
+      })
+    );
   }
 
   const results = await Promise.allSettled(syncPromises);
   progress.finish();
+
+  // Persist the manifest LAST, after every target's detail writes have resolved.
+  // Cursors advance only for zero-failure targets; untouched targets are
+  // preserved from the prior manifest.
+  await persistManifest(options.outputDir, context.env, account, manifest, outcomes);
 
   const errors = results
     .filter((result): result is PromiseRejectedResult => result.status === "rejected")
@@ -435,6 +791,163 @@ async function syncAll(
     }
     process.exitCode = 1;
   }
+}
+
+type ChangefeedTargetParams = {
+  context: CommandContext;
+  options: SyncOptions;
+  manifest: SyncManifest | null;
+  target: ChangefeedTarget;
+  task: ProgressTask;
+  userFullFrom: string | undefined;
+  ensureSeed: () => Promise<number | null>;
+  full: (
+    outputDir: string,
+    task: ProgressTask,
+    from: string | undefined
+  ) => Promise<number[]>;
+  incremental: (
+    outputDir: string,
+    task: ProgressTask,
+    ids: readonly number[]
+  ) => Promise<number[]>;
+};
+
+// Drive one changefeed-backed target: decide FULL vs INCREMENTAL, run it, and
+// compute whether/how its cursor may advance. Falls back to an UNBOUNDED full
+// crawl on cursor rejection or proactive staleness.
+async function syncChangefeedTarget(
+  params: ChangefeedTargetParams
+): Promise<TargetSyncOutcome> {
+  const { context, options, manifest, target, task } = params;
+
+  const overrideCursor = options.since
+    ? normalizeSinceCursor(options.since)
+    : undefined;
+  const storedCursor = overrideCursor ?? manifest?.cursors[target];
+  const pendingIds = manifest?.pending[target] ?? [];
+
+  const cursorStale =
+    storedCursor !== undefined &&
+    (() => {
+      const epoch = cursorEpochMs(storedCursor);
+      return epoch === null || epoch < Date.now() - PROACTIVE_FULL_MS;
+    })();
+
+  const startFull =
+    options.full || manifest === null || storedCursor === undefined || cursorStale;
+
+  if (!startFull && storedCursor !== undefined) {
+    // INCREMENTAL path.
+    let changes: ChangesResult;
+    try {
+      changes = await fetchChanges(context, storedCursor);
+    } catch (error) {
+      if (isCursorRejection(error)) {
+        process.stderr.write(
+          `${target}: cursor rejected (${(error as Error).message}); falling back to full resync\n`
+        );
+        return runFullTarget(params, /* unbounded */ true, pendingIds);
+      }
+      throw error;
+    }
+
+    const changedIds = uniqueIds(
+      target === "daily" ? changes.dailies : changes.conversations,
+      pendingIds
+    );
+    const failed = await params.incremental(options.outputDir, task, changedIds);
+    if (failed.length === 0) {
+      return {
+        advanced: true,
+        nextCursor: persistCursor(changes.until),
+        pending: [],
+        isFull: false,
+      };
+    }
+    return { advanced: false, pending: failed, isFull: false };
+  }
+
+  // FULL path. A user-requested full (first run, --full, or --since absent on a
+  // fresh manifest) honors --recent-days; a fallback-triggered full is unbounded.
+  return runFullTarget(params, /* unbounded */ false, pendingIds);
+}
+
+async function runFullTarget(
+  params: ChangefeedTargetParams,
+  unbounded: boolean,
+  pendingIds: number[]
+): Promise<TargetSyncOutcome> {
+  const { options, task, ensureSeed } = params;
+  const seeded = await ensureSeed();
+  if (seeded === null) {
+    throw new Error(
+      "Failed to seed changefeed cursor; aborting target to avoid a stale manifest."
+    );
+  }
+  const from = unbounded ? undefined : params.userFullFrom;
+  const failed = await params.full(options.outputDir, task, from);
+  if (failed.length === 0) {
+    return {
+      advanced: true,
+      nextCursor: persistCursor(seeded),
+      pending: [],
+      isFull: true,
+    };
+  }
+  // Preserve any prior pending ids in addition to this run's failures so they
+  // are not dropped when the cursor cannot advance.
+  return {
+    advanced: false,
+    pending: uniqueIds(failed, pendingIds),
+    isFull: true,
+  };
+}
+
+// Build and atomically write the next manifest, advancing only zero-failure
+// targets and preserving the rest.
+async function persistManifest(
+  outputDir: string,
+  env: Environment,
+  account: string,
+  prior: SyncManifest | null,
+  outcomes: Partial<Record<ChangefeedTarget, TargetSyncOutcome>>
+): Promise<void> {
+  const cursors: SyncManifest["cursors"] = { ...(prior?.cursors ?? {}) };
+  const pending: SyncManifest["pending"] = {
+    daily: prior?.pending.daily ?? [],
+    conversations: prior?.pending.conversations ?? [],
+  };
+  let lastFullSyncAtMs = prior?.lastFullSyncAtMs ?? 0;
+  const now = Date.now();
+
+  for (const target of ["daily", "conversations"] as const) {
+    const outcome = outcomes[target];
+    if (!outcome) {
+      continue; // target not run this pass; preserve prior cursor/pending
+    }
+    if (outcome.advanced && outcome.nextCursor !== undefined) {
+      cursors[target] = outcome.nextCursor;
+      pending[target] = [];
+      if (outcome.isFull) {
+        lastFullSyncAtMs = now;
+      }
+    } else {
+      pending[target] = outcome.pending;
+    }
+  }
+
+  const manifest: SyncManifest = {
+    schemaVersion: MANIFEST_VERSION,
+    env,
+    account,
+    cursors,
+    pending,
+    lastFullSyncAtMs,
+    lastSyncAtMs: now,
+  };
+
+  await writeSyncManifest(outputDir, manifest);
 }
 
 async function syncFacts(
@@ -459,37 +972,32 @@ async function syncTodos(
   task.complete();
 }
 
-async function syncDaily(
+// Hydrate + write a single daily summary. Returns null on success, or a failure
+// record on error. Shared by the list-mode (syncDaily) and id-mode
+// (syncDailyByIds) paths so output is byte-identical.
+async function writeDailyDetail(
   context: CommandContext,
-  outputDir: string,
+  dailyDir: string,
+  id: number
+): Promise<{ id: number; error: string } | null> {
+  try {
+    const detail = await fetchDailySummary(context, id);
+    const folderName = resolveDailyFolderName(detail);
+    const dayDir = path.join(dailyDir, folderName);
+    await mkdir(dayDir, { recursive: true });
+    const markdown = formatDailySummaryMarkdown(detail);
+    await writeFile(path.join(dayDir, "summary.md"), markdown, "utf8");
+    return null;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return { id, error: message };
+  }
+}
+
+function reportDailyFailures(
   task: ProgressTask,
-  from?: string
-): Promise<void> {
-  const dailySummaries = await fetchAllDailySummaries(context, task, from);
-  const dailyDir = path.join(outputDir, "daily");
-  await mkdir(dailyDir, { recursive: true });
-
-  const sortedDaily = [...dailySummaries].sort(
-    (a, b) => dailySortKey(a) - dailySortKey(b)
-  );
-  task.setTotal(sortedDaily.length);
-
-  const failures: Array<{ id: number; error: string }> = [];
-  await runWithConcurrency(sortedDaily, SYNC_CONCURRENCY, async (summary) => {
-    try {
-      const detail = await fetchDailySummary(context, summary.id);
-      const folderName = resolveDailyFolderName(detail);
-      const dayDir = path.join(dailyDir, folderName);
-      await mkdir(dayDir, { recursive: true });
-      const markdown = formatDailySummaryMarkdown(detail);
-      await writeFile(path.join(dayDir, "summary.md"), markdown, "utf8");
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      failures.push({ id: summary.id, error: message });
-    }
-    task.advance(1);
-  });
-
+  failures: Array<{ id: number; error: string }>
+): number[] {
   if (failures.length > 0) {
     task.setLabel(`daily done (${failures.length} failed)`);
     process.stderr.write(
@@ -505,77 +1013,149 @@ async function syncDaily(
     task.setLabel("daily done");
   }
   task.complete();
+  return failures.map((failure) => failure.id);
 }
 
-async function syncConversations(
+// FULL list-mode daily sync. Returns the ids that failed to sync.
+async function syncDaily(
   context: CommandContext,
   outputDir: string,
   task: ProgressTask,
   from?: string
-): Promise<void> {
-  const conversations = await fetchAllConversations(context, task, from);
-  const conversationsDir = path.join(outputDir, "conversations");
-  await mkdir(conversationsDir, { recursive: true });
+): Promise<number[]> {
+  const dailySummaries = await fetchAllDailySummaries(context, task, from);
+  const dailyDir = path.join(outputDir, "daily");
+  await mkdir(dailyDir, { recursive: true });
 
-  const sortedConversations = [...conversations].sort(
-    (a, b) => conversationSortKey(a) - conversationSortKey(b)
+  const sortedDaily = [...dailySummaries].sort(
+    (a, b) => dailySortKey(a) - dailySortKey(b)
   );
-  task.setTotal(sortedConversations.length);
+  task.setTotal(sortedDaily.length);
 
   const failures: Array<{ id: number; error: string }> = [];
-  const chunks = chunkArray(sortedConversations, BATCH_DETAIL_SIZE);
-
-  for (const chunk of chunks) {
-    const chunkIds = chunk.map((conversation) => conversation.id);
-    let details: ConversationDetail[] | null = null;
-
-    try {
-      details = await fetchConversationsBatch(context, chunkIds);
-    } catch {
-      details = null;
+  await runWithConcurrency(sortedDaily, SYNC_CONCURRENCY, async (summary) => {
+    const failure = await writeDailyDetail(context, dailyDir, summary.id);
+    if (failure) {
+      failures.push(failure);
     }
+    task.advance(1);
+  });
 
-    if (details) {
-      const detailById = new Map(details.map((detail) => [detail.id, detail]));
-      for (const conversation of chunk) {
-        const detail = detailById.get(conversation.id);
-        if (detail) {
-          try {
-            const dateFolder = resolveConversationFolderName(detail);
-            const dayDir = path.join(conversationsDir, dateFolder);
-            await mkdir(dayDir, { recursive: true });
-            const markdown = formatConversationMarkdown(detail);
-            await writeFile(path.join(dayDir, `${conversation.id}.md`), markdown, "utf8");
-          } catch (error) {
-            const message = error instanceof Error ? error.message : String(error);
-            failures.push({ id: conversation.id, error: message });
-          }
-        } else {
-          failures.push({
-            id: conversation.id,
-            error: "Missing from batch response",
-          });
-        }
-        task.advance(1);
-      }
-    } else {
-      await runWithConcurrency(chunk, SYNC_CONCURRENCY, async (conversation) => {
-        try {
-          const detail = await fetchConversation(context, conversation.id);
-          const dateFolder = resolveConversationFolderName(detail);
-          const dayDir = path.join(conversationsDir, dateFolder);
-          await mkdir(dayDir, { recursive: true });
-          const markdown = formatConversationMarkdown(detail);
-          await writeFile(path.join(dayDir, `${conversation.id}.md`), markdown, "utf8");
-        } catch (error) {
-          const message = error instanceof Error ? error.message : String(error);
-          failures.push({ id: conversation.id, error: message });
-        }
-        task.advance(1);
-      });
+  return reportDailyFailures(task, failures);
+}
+
+// INCREMENTAL id-mode daily sync. Hydrates only the supplied ids. Returns the
+// ids that failed to sync.
+async function syncDailyByIds(
+  context: CommandContext,
+  outputDir: string,
+  task: ProgressTask,
+  ids: readonly number[]
+): Promise<number[]> {
+  const dailyDir = path.join(outputDir, "daily");
+  await mkdir(dailyDir, { recursive: true });
+  task.setTotal(ids.length);
+
+  const failures: Array<{ id: number; error: string }> = [];
+  await runWithConcurrency(ids, SYNC_CONCURRENCY, async (id) => {
+    const failure = await writeDailyDetail(context, dailyDir, id);
+    if (failure) {
+      failures.push(failure);
     }
+    task.advance(1);
+  });
+
+  return reportDailyFailures(task, failures);
+}
+
+// Write a single conversation detail. Returns null on success or a failure
+// record on error.
+async function writeConversationDetail(
+  conversationsDir: string,
+  detail: ConversationDetail
+): Promise<{ id: number; error: string } | null> {
+  try {
+    const dateFolder = resolveConversationFolderName(detail);
+    const dayDir = path.join(conversationsDir, dateFolder);
+    await mkdir(dayDir, { recursive: true });
+    const markdown = formatConversationMarkdown(detail);
+    await writeFile(path.join(dayDir, `${detail.id}.md`), markdown, "utf8");
+    return null;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return { id: detail.id, error: message };
+  }
+}
+
+// Hydrate + write one chunk of conversation ids. Uses the batch endpoint with a
+// per-id GET fallback, both for whole-batch failures and for ids omitted from
+// the batch response (e.g. replication lag). Returns failures, advancing the
+// task once per id. Shared by list-mode and id-mode.
+async function writeConversationChunk(
+  context: CommandContext,
+  conversationsDir: string,
+  ids: readonly number[],
+  task: ProgressTask
+): Promise<Array<{ id: number; error: string }>> {
+  const failures: Array<{ id: number; error: string }> = [];
+
+  let details: ConversationDetail[] | null = null;
+  try {
+    details = await fetchConversationsBatch(context, [...ids]);
+  } catch {
+    details = null;
   }
 
+  if (details) {
+    const detailById = new Map(details.map((detail) => [detail.id, detail]));
+    for (const id of ids) {
+      const detail = detailById.get(id);
+      if (detail) {
+        const failure = await writeConversationDetail(conversationsDir, detail);
+        if (failure) {
+          failures.push(failure);
+        }
+      } else {
+        // Omitted from the batch response: retry via per-id GET. Counts as a
+        // failure (blocking cursor advance) if the GET also fails.
+        const failure = await writeConversationById(context, conversationsDir, id);
+        if (failure) {
+          failures.push(failure);
+        }
+      }
+      task.advance(1);
+    }
+  } else {
+    await runWithConcurrency([...ids], SYNC_CONCURRENCY, async (id) => {
+      const failure = await writeConversationById(context, conversationsDir, id);
+      if (failure) {
+        failures.push(failure);
+      }
+      task.advance(1);
+    });
+  }
+
+  return failures;
+}
+
+async function writeConversationById(
+  context: CommandContext,
+  conversationsDir: string,
+  id: number
+): Promise<{ id: number; error: string } | null> {
+  try {
+    const detail = await fetchConversation(context, id);
+    return await writeConversationDetail(conversationsDir, detail);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return { id, error: message };
+  }
+}
+
+function reportConversationFailures(
+  task: ProgressTask,
+  failures: Array<{ id: number; error: string }>
+): number[] {
   if (failures.length > 0) {
     task.setLabel(`conversations done (${failures.length} failed)`);
     process.stderr.write(
@@ -591,6 +1171,61 @@ async function syncConversations(
     task.setLabel("conversations done");
   }
   task.complete();
+  return failures.map((failure) => failure.id);
+}
+
+// FULL list-mode conversation sync. Returns the ids that failed to sync.
+async function syncConversations(
+  context: CommandContext,
+  outputDir: string,
+  task: ProgressTask,
+  from?: string
+): Promise<number[]> {
+  const conversations = await fetchAllConversations(context, task, from);
+  const conversationsDir = path.join(outputDir, "conversations");
+  await mkdir(conversationsDir, { recursive: true });
+
+  const sortedConversations = [...conversations].sort(
+    (a, b) => conversationSortKey(a) - conversationSortKey(b)
+  );
+  task.setTotal(sortedConversations.length);
+
+  const failures: Array<{ id: number; error: string }> = [];
+  const chunks = chunkArray(
+    sortedConversations.map((conversation) => conversation.id),
+    BATCH_DETAIL_SIZE
+  );
+
+  for (const chunk of chunks) {
+    failures.push(
+      ...(await writeConversationChunk(context, conversationsDir, chunk, task))
+    );
+  }
+
+  return reportConversationFailures(task, failures);
+}
+
+// INCREMENTAL id-mode conversation sync. Hydrates only the supplied ids.
+// Returns the ids that failed to sync.
+async function syncConversationsByIds(
+  context: CommandContext,
+  outputDir: string,
+  task: ProgressTask,
+  ids: readonly number[]
+): Promise<number[]> {
+  const conversationsDir = path.join(outputDir, "conversations");
+  await mkdir(conversationsDir, { recursive: true });
+  task.setTotal(ids.length);
+
+  const failures: Array<{ id: number; error: string }> = [];
+  const chunks = chunkArray([...ids], BATCH_DETAIL_SIZE);
+  for (const chunk of chunks) {
+    failures.push(
+      ...(await writeConversationChunk(context, conversationsDir, chunk, task))
+    );
+  }
+
+  return reportConversationFailures(task, failures);
 }
 
 function dailySortKey(summary: DailySummary): number {
