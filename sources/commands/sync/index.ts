@@ -834,8 +834,14 @@ async function syncChangefeedTarget(
       return epoch === null || epoch < Date.now() - PROACTIVE_FULL_MS;
     })();
 
-  const startFull =
-    options.full || manifest === null || storedCursor === undefined || cursorStale;
+  // A genuine user-requested full (first run, --full, or no stored cursor) honors
+  // --recent-days. A fallback-triggered full (proactive staleness here, or a
+  // reactive cursor rejection below) must be UNBOUNDED so edits to old items made
+  // during an offline gap are re-rendered.
+  const userRequestedFull =
+    options.full || manifest === null || storedCursor === undefined;
+
+  const startFull = userRequestedFull || cursorStale;
 
   if (!startFull && storedCursor !== undefined) {
     // INCREMENTAL path.
@@ -868,9 +874,9 @@ async function syncChangefeedTarget(
     return { advanced: false, pending: failed, isFull: false };
   }
 
-  // FULL path. A user-requested full (first run, --full, or --since absent on a
-  // fresh manifest) honors --recent-days; a fallback-triggered full is unbounded.
-  return runFullTarget(params, /* unbounded */ false, pendingIds);
+  // FULL path. A user-requested full honors --recent-days; a fallback-triggered
+  // full (proactive staleness) is unbounded so gap-edits to old items are caught.
+  return runFullTarget(params, /* unbounded */ !userRequestedFull, pendingIds);
 }
 
 async function runFullTarget(

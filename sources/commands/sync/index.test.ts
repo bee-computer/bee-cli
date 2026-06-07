@@ -635,6 +635,39 @@ describe("sync incremental — completeness", () => {
     expect(changeSearches.every((s) => s === "")).toBe(true);
   });
 
+  it("proactive staleness with --recent-days falls back to an UNBOUNDED full crawl (no `from`)", async () => {
+    const outputDir = await makeTempDir();
+    const staleCursor = `v1-${Date.now() - 7 * 24 * 60 * 60 * 1000}`;
+    writeManifest(
+      outputDir,
+      baseManifest({ cursors: { daily: staleCursor, conversations: staleCursor } })
+    );
+
+    let dailyListSearch: string | null = null;
+    const { context } = proxyContext(async (request) => {
+      const url = new URL(request.url);
+      const p = url.pathname;
+      if (p === "/v1/changes") return changesResponse({ until: 7_000_000 });
+      if (p === "/v1/facts") return emptyListResponse("facts");
+      if (p === "/v1/todos") return emptyListResponse("todos");
+      if (p === "/v1/daily") {
+        dailyListSearch = url.search;
+        return Response.json({ daily_summaries: [], next_cursor: null });
+      }
+      return Response.json({});
+    });
+
+    await syncCommand.run(
+      ["--output", outputDir, "--only", "daily", "--recent-days", "3"],
+      context
+    );
+
+    // A proactively-stale cursor is a fallback-triggered full: it must ignore
+    // --recent-days so gap-edits to old items are not missed.
+    expect(dailyListSearch).not.toBeNull();
+    expect(dailyListSearch as unknown as string).not.toContain("from=");
+  });
+
   it("--only conversations does not advance or clear the daily cursor/pending", async () => {
     const outputDir = await makeTempDir();
     const dailyCursor = `v1-${Date.now() - 60_000}`;
