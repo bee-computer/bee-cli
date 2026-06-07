@@ -24,7 +24,39 @@ describe("login command", () => {
       proxy: "http://127.0.0.1:8787",
       tokenStdin: false,
       qr: false,
+      noWait: false,
     });
+  });
+
+  it("parses --no-wait flag (defaults off)", () => {
+    expect(parseLoginArgs([])).toEqual({ tokenStdin: false, qr: false, noWait: false });
+    expect(parseLoginArgs(["--no-wait"])).toEqual({ tokenStdin: false, qr: false, noWait: true });
+  });
+
+  it("allows --no-wait with --qr", () => {
+    expect(parseLoginArgs(["--no-wait", "--qr"])).toEqual({
+      tokenStdin: false,
+      qr: true,
+      noWait: true,
+    });
+  });
+
+  it("rejects --no-wait with --token", () => {
+    expect(() => parseLoginArgs(["--no-wait", "--token", "abc"])).toThrow(
+      "--no-wait cannot be used with --token or --token-stdin."
+    );
+  });
+
+  it("rejects --no-wait with --token-stdin", () => {
+    expect(() => parseLoginArgs(["--no-wait", "--token-stdin"])).toThrow(
+      "--no-wait cannot be used with --token or --token-stdin."
+    );
+  });
+
+  it("rejects --no-wait with --proxy", () => {
+    expect(() => parseLoginArgs(["--no-wait", "--proxy", "http://127.0.0.1:8787"])).toThrow(
+      "--no-wait cannot be used with --proxy."
+    );
   });
 
   it("rejects --proxy with --token", () => {

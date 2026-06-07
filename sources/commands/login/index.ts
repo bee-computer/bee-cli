@@ -25,11 +25,13 @@ type LoginOptions = {
   proxy?: string;
   tokenStdin: boolean;
   qr: boolean;
+  noWait: boolean;
 };
 
 const USAGE = [
   "bee login",
   "bee login --qr",
+  "bee login --no-wait",
   "bee login --token <token>",
   "bee login --token-stdin",
   "bee login --proxy <url|socket>",
@@ -112,7 +114,14 @@ async function handleLogin(
       }
     }
 
-    token = await loginWithAppPairing(apiContext, options.qr);
+    const paired = await loginWithAppPairing(apiContext, options.qr, options.noWait);
+    if (paired === null) {
+      // --no-wait: the link was printed and pairing state persisted; exit without
+      // polling. The caller (e.g. an agent) sends the link to the user, then runs
+      // `bee status` to check, or re-runs `bee login` to resume and finish.
+      return;
+    }
+    token = paired;
   }
 
   if (!token) {
@@ -168,6 +177,7 @@ export function parseLoginArgs(args: readonly string[]): LoginOptions {
   let proxy: string | undefined;
   let tokenStdin = false;
   let qr = false;
+  let noWait = false;
   const positionals: string[] = [];
 
   for (let i = 0; i < args.length; i += 1) {
@@ -206,6 +216,11 @@ export function parseLoginArgs(args: readonly string[]): LoginOptions {
       continue;
     }
 
+    if (arg === "--no-wait") {
+      noWait = true;
+      continue;
+    }
+
     if (arg.startsWith("-")) {
       throw new Error(`Unknown option: ${arg}`);
     }
@@ -226,8 +241,16 @@ export function parseLoginArgs(args: readonly string[]): LoginOptions {
   if (proxy && tokenStdin) {
     throw new Error("Use either --proxy or --token-stdin, not both.");
   }
+  // --no-wait only governs the interactive pairing flow; it is meaningless with a
+  // token (already authenticated in one shot) or proxy auth.
+  if (noWait && (token || tokenStdin)) {
+    throw new Error("--no-wait cannot be used with --token or --token-stdin.");
+  }
+  if (noWait && proxy) {
+    throw new Error("--no-wait cannot be used with --proxy.");
+  }
 
-  const options: LoginOptions = { tokenStdin, qr };
+  const options: LoginOptions = { tokenStdin, qr, noWait };
   if (token !== undefined) {
     options.token = token;
   }
@@ -335,10 +358,15 @@ async function readTokenFromStdin(): Promise<string> {
   });
 }
 
+// Runs the app-pairing flow. Returns the token on success. When noWait is true,
+// prints the authentication link, persists the pairing state, and returns null
+// WITHOUT polling — the caller exits so an agent can hand the link to the user
+// and finish later with `bee login` (resumes) or check with `bee status`.
 async function loginWithAppPairing(
   context: CommandContext,
-  useQr: boolean
-): Promise<string> {
+  useQr: boolean,
+  noWait: boolean
+): Promise<string | null> {
   const existingState = await loadPairingState(context.env);
 
   if (existingState) {
@@ -346,7 +374,11 @@ async function loginWithAppPairing(
     const isExpired = !Number.isNaN(expiresAtMs) && Date.now() >= expiresAtMs;
 
     if (!isExpired) {
-      printWelcomeMessage(existingState.pairingUrl, existingState.expiresAt, "resumed", useQr);
+      await printWelcomeMessage(existingState.pairingUrl, existingState.expiresAt, "resumed", useQr, noWait);
+
+      if (noWait) {
+        return null;
+      }
 
       const secretKey = Buffer.from(existingState.secretKey, "base64");
       try {
@@ -396,7 +428,11 @@ async function loginWithAppPairing(
   await savePairingState(context.env, state);
 
   const authStatus = existingState ? "reset" : "new";
-  printWelcomeMessage(pairingUrl, initial.expiresAt, authStatus, useQr);
+  await printWelcomeMessage(pairingUrl, initial.expiresAt, authStatus, useQr, noWait);
+
+  if (noWait) {
+    return null;
+  }
 
   try {
     const token = await pollForAppToken({
@@ -471,7 +507,8 @@ async function printWelcomeMessage(
   pairingUrl: string,
   expiresAt: string,
   status: AuthStatus,
-  useQr: boolean
+  useQr: boolean,
+  noWait: boolean
 ): Promise<void> {
   const expiresAtMs = Date.parse(expiresAt);
   const remainingMs = expiresAtMs - Date.now();
@@ -529,5 +566,10 @@ async function printWelcomeMessage(
   );
   console.log("as long as the request has not expired.");
   console.log("");
-  console.log("Now waiting for you to approve the connection using the link above...");
+  if (noWait) {
+    console.log("Send the authentication link above to the device owner to approve.");
+    console.log("Then run 'bee status' to confirm, or 'bee login' again to resume and finish.");
+  } else {
+    console.log("Now waiting for you to approve the connection using the link above...");
+  }
 }
