@@ -1,4 +1,5 @@
 import type { Command, CommandContext } from "@/commands/types";
+import { ValidationError } from "@/errors";
 import type { Environment } from "@/environment";
 import { createDeveloperClient, createProxyClient } from "@/client";
 import {
@@ -125,7 +126,7 @@ async function handleLogin(
   }
 
   if (!token) {
-    throw new Error("Missing token.");
+    throw new ValidationError("Missing token.");
   }
 
   token = token.trim();
@@ -189,7 +190,7 @@ export function parseLoginArgs(args: readonly string[]): LoginOptions {
     if (arg === "--token") {
       const value = args[i + 1];
       if (value === undefined) {
-        throw new Error("--token requires a value");
+        throw new ValidationError("--token requires a value");
       }
       token = value;
       i += 1;
@@ -204,7 +205,7 @@ export function parseLoginArgs(args: readonly string[]): LoginOptions {
     if (arg === "--proxy") {
       const value = args[i + 1];
       if (value === undefined) {
-        throw new Error("--proxy requires a value");
+        throw new ValidationError("--proxy requires a value");
       }
       proxy = value;
       i += 1;
@@ -222,14 +223,14 @@ export function parseLoginArgs(args: readonly string[]): LoginOptions {
     }
 
     if (arg.startsWith("-")) {
-      throw new Error(`Unknown option: ${arg}`);
+      throw new ValidationError(`Unknown option: ${arg}`);
     }
 
     positionals.push(arg);
   }
 
   if (positionals.length > 0) {
-    throw new Error(`Unexpected arguments: ${positionals.join(" ")}`);
+    throw new ValidationError(`Unexpected arguments: ${positionals.join(" ")}`);
   }
 
   if (token && tokenStdin) {
@@ -335,7 +336,7 @@ export async function validateProxyConnection(
 
 async function readTokenFromStdin(): Promise<string> {
   if (process.stdin.isTTY) {
-    throw new Error("--token-stdin requires input via stdin.");
+    throw new ValidationError("--token-stdin requires input via stdin.");
   }
 
   const chunks: string[] = [];
