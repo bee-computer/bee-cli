@@ -1,4 +1,5 @@
 import type { Command } from "@/commands/types";
+import { ValidationError } from "@/errors";
 import { serveMcpHttp, type McpHttpOptions } from "@/mcp/httpServer";
 import { serveMcp } from "@/mcp/server";
 import {
@@ -31,7 +32,7 @@ export const mcpCommand: Command = {
   run: async (args, context) => {
     const [subcommand, ...remaining] = args;
     if (!subcommand) {
-      throw new Error("Missing MCP subcommand.");
+      throw new ValidationError("Missing MCP subcommand.");
     }
 
     if (subcommand === "serve") {
