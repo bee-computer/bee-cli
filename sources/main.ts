@@ -24,6 +24,7 @@ import { todayCommand } from "@/commands/today";
 import { versionCommand } from "@/commands/version";
 import type { Environment } from "@/environment";
 import { createCommandContext } from "@/context";
+import { startDashboard } from "@/tui/dashboard";
 
 const BIN = "bee";
 
@@ -79,6 +80,7 @@ function printHelp(): void {
     console.log(`  ${command.name}  ${command.description}${aliasText}`);
   }
 
+  console.log(`  dashboard  Interactive TUI dashboard (alias: ui)`);
   console.log("");
   console.log(`Run \"${BIN} <command> --help\" for command-specific help.`);
 }
@@ -102,6 +104,11 @@ async function runCli(): Promise<void> {
   if (firstArg === "--version" || firstArg === "-v") {
     const context = await createCommandContext(parsed.env);
     await versionCommand.run([], context);
+    return;
+  }
+
+  if (firstArg === "dashboard" || firstArg === "ui") {
+    await startDashboard();
     return;
   }
 
