@@ -1,4 +1,8 @@
 import type { Command } from "@/commands/types";
+import { BeeError } from "@/errors";
+import { resolveOutputFormat } from "@/utils/format";
+import { loadToken } from "@/secureStore";
+import { validateCommand, setCommandRegistry } from "@/commands/validate";
 import { activityCommand } from "@/commands/activity";
 import { conversationsCommand } from "@/commands/conversations";
 import { dailyCommand } from "@/commands/daily";
@@ -50,9 +54,12 @@ const commands = [
   syncCommand,
   proxyCommand,
   todosCommand,
+  validateCommand,
   pingCommand,
   versionCommand,
 ] satisfies readonly Command[];
+
+setCommandRegistry(commands);
 
 const commandIndex = new Map<string, Command>();
 for (const command of commands) {
@@ -112,6 +119,19 @@ async function runCli(): Promise<void> {
     return;
   }
 
+  if (firstArg === "--describe") {
+    const token = await loadToken(parsed.env);
+    const blob = {
+      version: "0.7.1",
+      auth_status: token ? "valid" : "unauthenticated",
+      commands: Object.fromEntries(
+        commands.map(cmd => [cmd.name, { description: cmd.description, requires_auth: true }])
+      ),
+    };
+    console.log(JSON.stringify(blob, null, 2));
+    return;
+  }
+
   const commandName = firstArg;
   const command = commandIndex.get(commandName);
 
@@ -132,13 +152,30 @@ async function runCli(): Promise<void> {
     const context = await createCommandContext(parsed.env);
     await command.run(commandArgs, context);
   } catch (error) {
-    if (error instanceof Error) {
-      console.error(error.message);
+    const { format } = resolveOutputFormat(commandArgs);
+    if (error instanceof BeeError) {
+      if (format === "text") {
+        console.error(error.message);
+        printCommandHelp(command);
+      } else {
+        console.error(JSON.stringify({
+          error: error.message,
+          code: error.exitCode,
+          recoverable: error.recoverable,
+          suggestion: error.suggestion,
+        }));
+      }
+      process.exitCode = error.exitCode;
     } else {
-      console.error("Unexpected error");
+      const msg = error instanceof Error ? error.message : "Unexpected error";
+      if (format === "text") {
+        console.error(msg);
+        printCommandHelp(command);
+      } else {
+        console.error(JSON.stringify({ error: msg, code: 1, recoverable: false }));
+      }
+      process.exitCode = 1;
     }
-    printCommandHelp(command);
-    process.exitCode = 1;
   }
 }
 
