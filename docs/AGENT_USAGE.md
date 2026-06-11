@@ -28,7 +28,7 @@ On error, stderr contains: {"error":"...","code":N,"recoverable":bool,"suggestio
 ## Installation (if not already installed)
 
 ```bash
-git clone https://github.com/giolaq/bee-cli.git
+git clone https://github.com/bee-computer/bee-cli.git
 cd bee-cli
 curl -fsSL https://bun.sh/install | bash
 export PATH="$HOME/.bun/bin:$PATH"

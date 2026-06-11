@@ -23,7 +23,7 @@ npm install -g @beeai/cli
 ### Option B: From source
 
 ```bash
-git clone https://github.com/giolaq/bee-cli.git
+git clone https://github.com/bee-computer/bee-cli.git
 cd bee-cli
 bun install
 bun run build
@@ -33,7 +33,7 @@ bun run build
 ### Option C: Direct with Bun (development)
 
 ```bash
-git clone https://github.com/giolaq/bee-cli.git
+git clone https://github.com/bee-computer/bee-cli.git
 cd bee-cli
 bun install
 # Run directly:
