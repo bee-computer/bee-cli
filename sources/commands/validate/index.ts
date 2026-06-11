@@ -37,11 +37,13 @@ async function handleValidate(
     return;
   }
 
-  const token = await loadToken(context.env);
-  if (!token) {
-    console.log(JSON.stringify({ valid: false, reason: "Not authenticated", code: 2 }));
-    process.exitCode = 2;
-    return;
+  if (!context.client.isProxy) {
+    const token = await loadToken(context.env);
+    if (!token) {
+      console.log(JSON.stringify({ valid: false, reason: "Not authenticated", code: 2 }));
+      process.exitCode = 2;
+      return;
+    }
   }
 
   console.log(JSON.stringify({ valid: true }));
