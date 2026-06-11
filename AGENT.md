@@ -1,46 +1,64 @@
-# Bee CLI Agent Instructions
+# Bee CLI — Agent Instructions
 
-Instructions for AI agents (OpenClaw, Hermes, etc.) to use bee-cli autonomously.
+Instructions for AI agents to use bee-cli autonomously via shell.
 
-## Setup
+## Quick Start (copy-paste to any agent)
+
+```
+You have access to the Bee CLI for managing personal AI data.
+
+Environment:
+  export PATH="$HOME/.bun/bin:$PATH"
+  export BEE_FORCE_FILE_STORE=1
+  export BEE_OUTPUT_FORMAT=json
+
+Discover all commands:
+  bun ./sources/main.ts --describe
+
+Pre-validate before writes:
+  bun ./sources/main.ts validate <command>
+
+Execute:
+  bun ./sources/main.ts <command> [subcommand] [--flags]
+
+Exit codes: 0=success, 2=auth, 3=bad args, 4=network, 5=rate-limit
+On error, stderr contains: {"error":"...","code":N,"recoverable":bool,"suggestion":"..."}
+```
+
+## Installation (if not already installed)
 
 ```bash
-export BEE_OUTPUT_FORMAT=json
+git clone https://github.com/giolaq/bee-cli.git
+cd bee-cli
+curl -fsSL https://bun.sh/install | bash
+export PATH="$HOME/.bun/bin:$PATH"
+bun install
 export BEE_FORCE_FILE_STORE=1
+export BEE_OUTPUT_FORMAT=json
+bun ./sources/main.ts login
 ```
 
-Verify authentication:
-```bash
-bee status --json
-```
+## Protocol
 
-If `"authenticated": false`, run `bee login` (requires human interaction once).
+1. Run `--describe` once to learn available commands and their parameters
+2. Run `validate <command>` before any create/update/delete
+3. Parse stdout as JSON on exit code 0
+4. On non-zero exit, read stderr for structured error JSON
 
-Discover available commands:
-```bash
-bee --describe
-```
+## Exit Codes
 
-## Usage Pattern
-
-1. Set `BEE_OUTPUT_FORMAT=json` in your environment (all output becomes JSON).
-2. Call `bee validate <command> [subcommand] [--flags]` before mutating commands to pre-check.
-3. Read stdout as JSON. All commands return structured data.
-4. Check exit code after every call:
-   - `0` = success, process the JSON response
-   - `2` = auth error, run `bee login` or refresh token
-   - `3` = invalid arguments, fix the flags and retry
-   - `4` = API/network error, retry with exponential backoff
-   - `5` = rate limited, wait and retry
-   - `1` = general error, report to user
-5. On non-zero exit, read stderr for structured error JSON:
-   ```json
-   {"error": "message", "code": 3, "recoverable": false, "suggestion": "..."}
-   ```
+| Code | Meaning | Agent Action |
+|------|---------|-------------|
+| 0 | Success | Parse stdout JSON |
+| 1 | General error | Report to user |
+| 2 | Auth error | Run `bee login` |
+| 3 | Invalid arguments | Fix flags, retry |
+| 4 | Network/API error | Retry with backoff |
+| 5 | Rate limited | Wait 60s, retry |
 
 ## Commands
 
-### Read operations (no side effects)
+### Read (no side effects)
 
 | Command | Description |
 |---------|-------------|
@@ -48,30 +66,32 @@ bee --describe
 | `bee facts get <id>` | Get a single fact |
 | `bee todos list [--limit N] [--cursor C]` | List todos |
 | `bee todos get <id>` | Get a single todo |
-| `bee conversations list [--limit N] [--cursor C] [--bookmarked]` | List conversations |
+| `bee conversations list [--limit N] [--cursor C]` | List conversations |
 | `bee conversations get <id>` | Get conversation detail |
+| `bee conversations transcript <id>` | Get full transcript |
 | `bee daily list [--limit N] [--cursor C]` | List daily summaries |
 | `bee daily get <id>` | Get daily summary detail |
 | `bee journals list [--limit N] [--cursor C]` | List journal entries |
-| `bee search --query <text> [--type conversations\|emails\|calendar] [--neural]` | Search across data |
-| `bee today` | Today's calendar + emails brief |
+| `bee journals get <id>` | Get a journal entry |
+| `bee search --query <text>` | Search across data |
+| `bee today` | Today's brief |
 | `bee now` | Recent conversations (last 10 hours) |
 | `bee changed [--cursor C]` | Changes since last check |
-| `bee insights list [--category C]` | List insights |
-| `bee me` | User profile |
-| `bee status` | Auth and connection status |
 | `bee activity [--limit N]` | Recent activity |
+| `bee insights list [--limit N]` | AI insights |
 | `bee locations [--limit N]` | Location history |
-| `bee photos [--limit N]` | Photos with AI descriptions |
+| `bee photos [--limit N]` | Photos with descriptions |
+| `bee me` | User profile |
+| `bee status --json` | Auth and connection status |
 
-### Write operations (have side effects)
+### Write (validate first)
 
 | Command | Description |
 |---------|-------------|
 | `bee facts create --text <text>` | Create a fact |
-| `bee facts update <id> --text <text> [--confirmed true\|false]` | Update a fact |
+| `bee facts update <id> --text <text>` | Update a fact |
 | `bee facts delete <id>` | Delete a fact |
-| `bee todos create --text <text> [--priority N] [--alarm-at <iso>]` | Create a todo |
+| `bee todos create --text <text>` | Create a todo |
 | `bee todos update <id> [--text T] [--completed true\|false]` | Update a todo |
 | `bee todos delete <id>` | Delete a todo |
 
@@ -79,34 +99,30 @@ bee --describe
 
 | Command | Description |
 |---------|-------------|
-| `bee --describe` | Full command schema (JSON blob for discovery) |
-| `bee validate <command> [args]` | Pre-validate without executing |
-| `bee status --json` | Structured auth/connection status |
-| `bee sync --output <dir> [--only facts\|todos\|daily\|conversations]` | Export to markdown files |
-| `bee stream [--types T] [--json\|--agent]` | Real-time event stream (SSE) |
+| `bee --describe` | Full command schema with parameters (JSON) |
+| `bee validate <command>` | Pre-validate without executing |
+| `bee sync --output <dir>` | Export to markdown files |
+| `bee stream [--json]` | Real-time event stream (SSE) |
+| `bee mcp` | Start MCP server (alternative agent interface) |
+| `bee dashboard` | Interactive TUI (humans only) |
 
 ## Pagination
 
 List commands return `next_cursor` in the response. Pass it back:
 ```bash
-bee facts list --cursor "v1-1779315328643-10583865"
+bee facts list --cursor "cursor_value_here"
 ```
-
-## Output Modes
-
-| Flag | Effect |
-|------|--------|
-| (none with `BEE_OUTPUT_FORMAT=json`) | JSON output (agent default) |
-| `--pretty` | Human-readable markdown |
-| `--minimal` | Compact JSON (strips timezone, no indentation) |
-| `--json` | Explicit JSON (same as env var) |
 
 ## Error Recovery
 
 ```
-Exit 2 (auth)    → bee login (needs human), then retry
+Exit 2 (auth)    → run bee login (needs human), then retry
 Exit 3 (args)    → fix command flags, retry immediately
-Exit 4 (network) → exponential backoff: 1s, 2s, 4s, 8s, max 3 retries
+Exit 4 (network) → exponential backoff: 1s, 2s, 4s, max 3 retries
 Exit 5 (rate)    → wait 60s, then retry
 Exit 1 (general) → log and report to user
 ```
+
+## Alternative: MCP Protocol
+
+For agents that support MCP natively, use `bee mcp` to start an MCP server instead of shell commands. MCP provides richer tool schemas and structured responses at the protocol level.
