@@ -120,13 +120,12 @@ async function runCli(): Promise<void> {
   }
 
   if (firstArg === "--describe") {
+    const { RESOURCES } = await import("@/resources");
     const token = await loadToken(parsed.env);
     const blob = {
       version: "0.7.1",
       auth_status: token ? "valid" : "unauthenticated",
-      commands: Object.fromEntries(
-        commands.map(cmd => [cmd.name, { description: cmd.description, requires_auth: true }])
-      ),
+      commands: buildDescribeBlob(RESOURCES),
     };
     console.log(JSON.stringify(blob, null, 2));
     return;
@@ -194,4 +193,52 @@ function parseGlobalArgs(args: readonly string[]): { env: Environment; args: str
   }
 
   return { env, args: remaining };
+}
+
+function buildDescribeBlob(resources: readonly import("@/resources/types").ResourceModule[]): Record<string, unknown> {
+  const result: Record<string, unknown> = {};
+
+  for (const resource of resources) {
+    const cliActions = resource.actions.filter(a => a.cli !== undefined);
+    if (cliActions.length === 0) continue;
+
+    for (const action of cliActions) {
+      const cli = action.cli!;
+      const key = cli.subcommand
+        ? `${resource.cliCommand.name} ${cli.subcommand}`
+        : resource.cliCommand.name;
+
+      const args: Array<{ name: string; type: string; required?: boolean }> = [];
+
+      if (cli.positionals) {
+        for (const pos of cli.positionals) {
+          args.push({ name: pos.name, type: "positional", required: pos.required });
+        }
+      }
+
+      for (const flag of cli.flags) {
+        args.push({ name: flag.name, type: flag.kind });
+      }
+
+      const hasSideEffects = action.mcp?.name?.includes("create") ||
+        action.mcp?.name?.includes("update") ||
+        action.mcp?.name?.includes("delete");
+
+      result[key] = {
+        description: action.mcp?.description ?? resource.cliCommand.description,
+        args,
+        side_effects: hasSideEffects ?? false,
+        requires_auth: true,
+      };
+    }
+  }
+
+  // Add non-resource commands
+  result["validate"] = { description: "Pre-validate a command without executing", args: [{ name: "command", type: "positional", required: true }], side_effects: false, requires_auth: false };
+  result["dashboard"] = { description: "Interactive TUI dashboard", args: [], side_effects: false, requires_auth: true };
+  result["stream"] = { description: "Stream real-time events (SSE)", args: [{ name: "--types", type: "string" }, { name: "--json", type: "bool" }, { name: "--agent", type: "bool" }], side_effects: false, requires_auth: true };
+  result["sync"] = { description: "Export data to markdown files", args: [{ name: "--output", type: "string" }, { name: "--only", type: "string" }], side_effects: false, requires_auth: true };
+  result["mcp"] = { description: "Start MCP server for AI agents", args: [], side_effects: false, requires_auth: true };
+
+  return result;
 }
