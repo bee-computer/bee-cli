@@ -63,12 +63,12 @@ bee mcp serve-http [--port N]   # local HTTP, 127.0.0.1, bearer-token auth
 
 Every read, search, and manage capability below is exposed as an MCP tool (`bee_search`, `bee_list_facts`, `bee_get_daily_summary`, …), so the CLI and your assistant work from the same data.
 
-## Use Bee with shell-based agents
+## Use Bee with AI Agents (CLI)
 
-For AI agents that prefer shell invocation over MCP (OpenClaw, Hermes, custom agents), the CLI provides structured JSON output, typed exit codes, command discovery, and pre-validation:
+If your prefer CLI for your Agent over MCP, the CLI provides structured JSON output, typed exit codes, command discovery, and pre-validation:
 
 ```bash
-export BEE_FORCE_FILE_STORE=1 BEE_OUTPUT_FORMAT=json
+export BEE_OUTPUT_FORMAT=json
 bee --describe          # discover all commands + parameters as JSON
 bee validate facts list # pre-check before executing
 bee facts list          # structured JSON on stdout, errors on stderr

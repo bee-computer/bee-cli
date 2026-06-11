@@ -8,40 +8,42 @@ Instructions for AI agents to use bee-cli autonomously via shell.
 You have access to the Bee CLI for managing personal AI data.
 
 Environment:
-  export PATH="$HOME/.bun/bin:$PATH"
-  export BEE_FORCE_FILE_STORE=1
   export BEE_OUTPUT_FORMAT=json
 
 Discover all commands:
-  bun ./sources/main.ts --describe
+  bee --describe
 
 Pre-validate before writes:
-  bun ./sources/main.ts validate <command>
+  bee validate <command>
 
 Execute:
-  bun ./sources/main.ts <command> [subcommand] [--flags]
+  bee <command> [subcommand] [--flags]
 
 Exit codes: 0=success, 2=auth, 3=bad args, 4=network, 5=rate-limit
 On error, stderr contains: {"error":"...","code":N,"recoverable":bool,"suggestion":"..."}
 ```
 
-## Installation (if not already installed)
+## Installation
+
+```bash
+npm install -g @beeai/cli
+bee login
+```
+
+Or from source:
 
 ```bash
 git clone https://github.com/bee-computer/bee-cli.git
 cd bee-cli
-curl -fsSL https://bun.sh/install | bash
-export PATH="$HOME/.bun/bin:$PATH"
 bun install
-export BEE_FORCE_FILE_STORE=1
-export BEE_OUTPUT_FORMAT=json
-bun ./sources/main.ts login
+bun run build
+./dist/bee login
 ```
 
 ## Protocol
 
-1. Run `--describe` once to learn available commands and their parameters
-2. Run `validate <command>` before any create/update/delete
+1. Run `bee --describe` once to learn available commands and their parameters
+2. Run `bee validate <command>` before any create/update/delete
 3. Parse stdout as JSON on exit code 0
 4. On non-zero exit, read stderr for structured error JSON
 
