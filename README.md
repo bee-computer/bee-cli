@@ -139,7 +139,7 @@ By default, data commands return markdown. Use `--json` to print raw JSON.
 - `conversations` - Access your recorded conversations.
   - `conversations list` - List conversations. Options: `--limit N`, `--cursor <cursor>`, `--json`.
   - `conversations get <id>` - Get a specific conversation with full transcript. Options: `--json`.
-  - `conversations transcript <id>` - Get just the transcript utterances. Options: `--json`.
+  - `conversations transcript <id>` - Get just the transcript utterances. Use `--since <epochMs>` to return only utterances spoken at or after a given time (epoch milliseconds) — handy for polling a live transcript for just the new utterances. Options: `--since <epochMs>`, `--json`.
   - `conversations related <id>` - Find conversations related to one. Options: `--limit N`, `--json`.
 
 - `daily` - Access daily summaries of your activity.

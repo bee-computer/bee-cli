@@ -22,7 +22,7 @@ import {
 const USAGE = [
   "bee conversations list [--limit N] [--cursor <cursor>] [--json]",
   "bee conversations get <id> [--json]",
-  "bee conversations transcript <id> [--json]",
+  "bee conversations transcript <id> [--since <epochMs>] [--json]",
   "bee conversations related <id> [--limit N] [--json]",
 ].join("\n");
 
@@ -203,7 +203,10 @@ const getConversation: ActionDefinition<ConversationGetInput> = {
 
 // ---- transcript (= bee_get_conversation_transcript) -------------------------
 
-type ConversationTranscriptInput = { id: number };
+// `since` (epoch ms) is an optional lower bound on utterance timestamps. It is
+// carried as an optional so the unfiltered path (no --since) stays byte-for-byte
+// unchanged; only when set do we drop older utterances and surface the bound.
+type ConversationTranscriptInput = { id: number; since: number | undefined };
 
 const getConversationTranscript: ActionDefinition<ConversationTranscriptInput> = {
   mcp: {
@@ -211,14 +214,22 @@ const getConversationTranscript: ActionDefinition<ConversationTranscriptInput> =
     description:
       "Get ASR transcript utterances for one captured Bee conversation. Use only when transcript detail is needed; avoid direct quotes unless surrounding context gives high confidence.",
     inputSchema: objectSchema({
-      properties: { id: idNumber("Bee conversation ID.") },
+      properties: {
+        id: idNumber("Bee conversation ID."),
+        since: {
+          type: "number",
+          description:
+            "Only return utterances spoken at or after this time (epoch milliseconds). Lets a live transcript watcher poll for just new utterances without tracking which it has already seen. Utterances with no timestamp are excluded when set.",
+        },
+      },
       required: ["id"],
     }),
   },
   cli: {
     subcommand: "transcript",
     positionals: [{ name: "id", required: false }],
-    flags: [],
+    // --since is an int (epoch milliseconds), matching `bee search --since`.
+    flags: [{ name: "--since", kind: "int" }],
     render: (result, format) => {
       if (result.kind !== "json") {
         return;
@@ -226,17 +237,44 @@ const getConversationTranscript: ActionDefinition<ConversationTranscriptInput> =
       printToolData("Conversation Transcript", result.data, format);
     },
   },
-  coerceInput: (raw, surface) => ({ id: coerceConversationId(raw["id"], surface) }),
+  coerceInput: (raw, surface) => ({
+    id: coerceConversationId(raw["id"], surface),
+    // CLI: the argv parser already produced a number (or omitted). MCP: accept a
+    // native finite number, otherwise treat as absent. Either way an absent value
+    // is undefined, which leaves the transcript unfiltered.
+    since: surface === "cli"
+      ? (typeof raw["since"] === "number" ? raw["since"] : undefined)
+      : (typeof raw["since"] === "number" && Number.isFinite(raw["since"]) ? raw["since"] : undefined),
+  }),
   run: async (ctx, input) => {
     const data = asRecord(parseJson(await apiGet(ctx, `/v1/conversations/${input.id}`)));
     const conversation = asRecord(data.conversation);
-    const transcript = arrayProp(conversation, "transcriptions").flatMap((transcription) => {
+    let transcript = arrayProp(conversation, "transcriptions").flatMap((transcription) => {
       return arrayProp(asRecord(transcription), "utterances");
     });
+    // When --since is set, keep only utterances at or after it, ordered by the
+    // SAME timestamp key the detail document uses to sort utterances
+    // (spoken_at ?? start ?? 0). Utterances with neither spoken_at nor start are
+    // excluded: with no timestamp they cannot be ordered against the bound, so a
+    // watcher would re-emit them on every poll. Omitting --since leaves the
+    // transcript untouched.
+    if (input.since !== undefined) {
+      const since = input.since;
+      transcript = transcript.filter((utterance) => {
+        const record = asRecord(utterance);
+        const spokenAt = typeof record["spoken_at"] === "number" ? record["spoken_at"] : null;
+        const start = typeof record["start"] === "number" ? record["start"] : null;
+        const timestamp = spokenAt ?? start;
+        return timestamp !== null && timestamp >= since;
+      });
+    }
     return {
       kind: "json",
       data: {
         conversationId: input.id,
+        // Echo back the applied lower bound so callers can confirm the filter ran;
+        // omitted entirely when no --since was supplied.
+        ...(input.since !== undefined ? { since: input.since } : {}),
         transcript,
         note: "Transcript text is ASR output and may contain recognition errors. Avoid direct quotes unless surrounding Bee context gives high confidence.",
       },
