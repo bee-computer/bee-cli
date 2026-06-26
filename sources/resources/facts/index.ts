@@ -7,8 +7,11 @@
 //    confirmed when includeUnconfirmed is true.
 //  - facts search and bee_search_facts both query the BM25 facts index via
 //    POST /v1/search/conversations with filter=facts.
-//  - bee_update_fact (MCP) fetches the existing text when text is omitted; the
-//    CLI `facts update` requires --text and never fetches.
+//  - bee_update_fact (MCP) and the CLI `facts update` both fetch the existing
+//    text when text is omitted, reusing the same fetchText path so a bare
+//    `facts update <id> --confirmed true` preserves the stored text. The CLI
+//    `facts confirm <id>` is sugar over that path (sets confirmed=true) and is
+//    CLI-only: bee_update_fact already covers the confirm-by-flag case for MCP.
 import { printJson } from "@/client/clientApi";
 import { printToolData } from "@/commands/mcpToolOutput";
 import type { JsonObject } from "@/mcp/types";
@@ -42,7 +45,8 @@ const USAGE = [
   "bee facts search --query <text> [--limit N] [--json]",
   "bee facts get <id> [--json]",
   "bee facts create --text <text> [--json]",
-  "bee facts update <id> --text <text> [--confirmed <true|false>] [--json]",
+  "bee facts update <id> [--text <text>] [--confirmed <true|false>] [--json]",
+  "bee facts confirm <id> [--json]",
   "bee facts delete <id> [--json]",
 ].join("\n");
 
@@ -419,9 +423,9 @@ const createFact: ActionDefinition<FactCreateInput> = {
 
 // ---- update (= bee_update_fact) --------------------------------------------
 
-// `text` is optional only on the MCP surface: when absent, run() fetches the
-// existing fact text. The CLI always supplies text. fetchText distinguishes
-// "no text provided" from an empty string.
+// `text` is optional on both surfaces: when absent, run() fetches the existing
+// fact text via the fetchText path so only the provided fields (e.g. confirmed)
+// change. fetchText distinguishes "no text provided" from an empty string.
 type FactUpdateInput = {
   id: number;
   text: string | undefined;
@@ -458,17 +462,19 @@ const updateFact: ActionDefinition<FactUpdateInput> = {
   },
   coerceInput: (raw, surface) => {
     if (surface === "cli") {
-      // CLI `facts update` validation order: missing id -> missing text -> bad id
-      // (numeric) check. --text is required (no fetch like MCP). The shared parser
-      // already emitted "Unexpected arguments:" for >1 positionals.
+      // CLI `facts update` validation order: missing id -> bad id (numeric) check.
+      // The shared parser already emitted "Unexpected arguments:" for >1
+      // positionals. --text is now optional: when omitted we reuse the fetchText
+      // path (same as MCP) so only the provided fields (e.g. --confirmed) change
+      // and the stored text is preserved.
       if (raw["id"] === undefined) {
         throw new Error("Missing fact id.");
       }
-      if (coerceOptionalString(raw["text"]) === undefined) {
-        throw new Error("Missing fact text. Provide --text.");
-      }
       const id = coerceCliFactId(raw["id"]);
-      const input: FactUpdateInput = { id, text: stringArg(raw["text"], "text"), fetchText: false };
+      const hasText = coerceOptionalString(raw["text"]) !== undefined;
+      const input: FactUpdateInput = hasText
+        ? { id, text: stringArg(raw["text"], "text"), fetchText: false }
+        : { id, text: undefined, fetchText: true };
       if (typeof raw["confirmed"] === "boolean") {
         input.confirmed = raw["confirmed"];
       }
@@ -507,6 +513,37 @@ const updateFact: ActionDefinition<FactUpdateInput> = {
     const data = parseJson(await apiPut(ctx, `/v1/facts/${input.id}`, body));
     return { kind: "json", data };
   },
+};
+
+// ---- confirm (CLI only) -----------------------------------------------------
+
+// Sugar for the common "flip confirmed on, leave the text alone" case so callers
+// don't hand-write `update <id> --confirmed true`. CLI-only: bee_update_fact
+// already lets MCP callers set confirmed without supplying text, so adding a
+// separate MCP tool would only churn the tool snapshot for no new capability.
+// Reuses updateFact.run by producing the same fetchText input with confirmed
+// pinned to true.
+type FactConfirmInput = FactUpdateInput;
+
+const confirmFact: ActionDefinition<FactConfirmInput> = {
+  cli: {
+    subcommand: "confirm",
+    positionals: [{ name: "id", required: false }],
+    flags: [],
+    render: (result, format) => {
+      if (result.kind !== "json") {
+        return;
+      }
+      renderFactDocument(result.data, format);
+    },
+  },
+  coerceInput: (raw) => ({
+    id: coerceCliFactId(raw["id"]),
+    text: undefined,
+    fetchText: true,
+    confirmed: true,
+  }),
+  run: updateFact.run,
 };
 
 // ---- delete (= bee_delete_fact) --------------------------------------------
@@ -548,5 +585,13 @@ export const factsResource: ResourceModule = {
     missingSubcommandMessage: "Missing subcommand. Use list.",
     unknownSubcommandPrefix: "Unknown facts subcommand: ",
   },
-  actions: [listFacts, searchFacts, getFact, createFact, updateFact, deleteFact],
+  actions: [
+    listFacts,
+    searchFacts,
+    getFact,
+    createFact,
+    updateFact,
+    confirmFact,
+    deleteFact,
+  ],
 };

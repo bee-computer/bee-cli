@@ -121,7 +121,8 @@ By default, data commands return markdown. Use `--json` to print raw JSON.
   - `facts list` - List facts. Options: `--limit N`, `--cursor <cursor>`, `--unconfirmed`, `--json`.
   - `facts get <id>` - Get a specific fact. Options: `--json`.
   - `facts create --text <text>` - Create a new fact. Options: `--json`.
-  - `facts update <id> --text <text>` - Update a fact. Options: `--confirmed <true|false>`, `--json`.
+  - `facts update <id>` - Update a fact. Options: `--text <text>` (when omitted, the existing text is preserved), `--confirmed <true|false>`, `--json`.
+  - `facts confirm <id>` - Confirm a fact (sets `confirmed=true`) while preserving its existing text. Options: `--json`.
   - `facts delete <id>` - Delete a fact. Options: `--json`.
   - `facts search --query <text>` - Search saved facts. Options: `--limit N`, `--json`.
 

@@ -275,9 +275,31 @@ describe("facts command (registry-derived)", () => {
     await expectError(factsCommand.run(["update", "--text", "x"], ctx), "Missing fact id.");
   });
 
-  it("rejects update without --text", async () => {
-    const ctx = proxyContext(() => Response.json({}));
-    await expectError(factsCommand.run(["update", "4"], ctx), "Missing fact text. Provide --text.");
+  it("updates --confirmed without --text by fetching and preserving existing text", async () => {
+    let getCalls = 0;
+    let putBody: unknown;
+    const ctx = proxyContext(async (request) => {
+      const url = new URL(request.url);
+      expect(url.pathname).toBe("/v1/facts/4");
+      if (request.method === "GET") {
+        getCalls += 1;
+        return Response.json({ id: 4, text: "Stored", tags: [], created_at: 0, confirmed: false });
+      }
+      expect(request.method).toBe("PUT");
+      putBody = await request.json();
+      return Response.json({ id: 4, text: "Stored", tags: [], created_at: 0, confirmed: true });
+    });
+    const { logs, restore } = captureLogs();
+    try {
+      await factsCommand.run(["update", "4", "--confirmed", "true"], ctx);
+    } finally {
+      restore();
+    }
+    // The existing text is fetched (GET) and echoed back in the PUT so it is not
+    // rewritten; only the provided field changes.
+    expect(getCalls).toBe(1);
+    expect(putBody).toEqual({ text: "Stored", confirmed: true });
+    expect(logs.join("\n")).toContain("- text: Stored");
   });
 
   it("rejects update with bad --confirmed", async () => {
@@ -286,6 +308,48 @@ describe("facts command (registry-derived)", () => {
       factsCommand.run(["update", "4", "--text", "x", "--confirmed", "maybe"], ctx),
       "--confirmed must be true or false"
     );
+  });
+
+  // ---- confirm --------------------------------------------------------------
+
+  it("confirm fetches existing text and PUTs confirmed=true without rewriting text", async () => {
+    let getCalls = 0;
+    let putBody: unknown;
+    const ctx = proxyContext(async (request) => {
+      const url = new URL(request.url);
+      expect(url.pathname).toBe("/v1/facts/7");
+      if (request.method === "GET") {
+        getCalls += 1;
+        return Response.json({ id: 7, text: "Keep me", tags: [], created_at: 0, confirmed: false });
+      }
+      expect(request.method).toBe("PUT");
+      putBody = await request.json();
+      return Response.json({ id: 7, text: "Keep me", tags: [], created_at: 0, confirmed: true });
+    });
+    const { logs, restore } = captureLogs();
+    try {
+      await factsCommand.run(["confirm", "7"], ctx);
+    } finally {
+      restore();
+    }
+    expect(getCalls).toBe(1);
+    expect(putBody).toEqual({ text: "Keep me", confirmed: true });
+    expect(logs.join("\n")).toContain("- confirmed: true");
+  });
+
+  it("rejects confirm without an id", async () => {
+    const ctx = proxyContext(() => Response.json({}));
+    await expectError(factsCommand.run(["confirm"], ctx), "Missing fact id.");
+  });
+
+  it("rejects a non-numeric id on confirm", async () => {
+    const ctx = proxyContext(() => Response.json({}));
+    await expectError(factsCommand.run(["confirm", "abc"], ctx), "Fact id must be a positive integer.");
+  });
+
+  it("rejects extra positionals on confirm", async () => {
+    const ctx = proxyContext(() => Response.json({}));
+    await expectError(factsCommand.run(["confirm", "1", "2"], ctx), "Unexpected arguments: 1 2");
   });
 
   // ---- delete ---------------------------------------------------------------
