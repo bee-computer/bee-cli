@@ -42,6 +42,23 @@ function coerceConversationId(value: unknown, surface: Surface): number {
   return parsed;
 }
 
+function parseTranscriptSince(value: unknown, surface: Surface): number | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  const parsed =
+    typeof value === "number"
+      ? value
+      : typeof value === "string" && value.trim().length > 0
+        ? Number(value)
+        : Number.NaN;
+  if (!Number.isFinite(parsed)) {
+    const name = surface === "cli" ? "--since" : "since";
+    throw new Error(`${name} must be a valid epoch timestamp`);
+  }
+  return parsed;
+}
+
 // ---- list (= bee_list_conversations) ----------------------------------------
 
 type ConversationsListInput = { limit: number | undefined; cursor: string | undefined };
@@ -228,8 +245,8 @@ const getConversationTranscript: ActionDefinition<ConversationTranscriptInput> =
   cli: {
     subcommand: "transcript",
     positionals: [{ name: "id", required: false }],
-    // --since is an int (epoch milliseconds), matching `bee search --since`.
-    flags: [{ name: "--since", kind: "int" }],
+    // Parse strictly in coerceInput, matching `bee search --since`.
+    flags: [{ name: "--since", kind: "string" }],
     render: (result, format) => {
       if (result.kind !== "json") {
         return;
@@ -239,12 +256,7 @@ const getConversationTranscript: ActionDefinition<ConversationTranscriptInput> =
   },
   coerceInput: (raw, surface) => ({
     id: coerceConversationId(raw["id"], surface),
-    // CLI: the argv parser already produced a number (or omitted). MCP: accept a
-    // native finite number, otherwise treat as absent. Either way an absent value
-    // is undefined, which leaves the transcript unfiltered.
-    since: surface === "cli"
-      ? (typeof raw["since"] === "number" ? raw["since"] : undefined)
-      : (typeof raw["since"] === "number" && Number.isFinite(raw["since"]) ? raw["since"] : undefined),
+    since: parseTranscriptSince(raw["since"], surface),
   }),
   run: async (ctx, input) => {
     const data = asRecord(parseJson(await apiGet(ctx, `/v1/conversations/${input.id}`)));

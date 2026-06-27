@@ -89,6 +89,14 @@ describe("conversations command (registry-derived)", () => {
     await expectError(conversationsCommand.run(["transcript"], ctx), "Missing conversation id.");
   });
 
+  it("rejects a malformed --since on transcript", async () => {
+    const ctx = proxyContext(() => Response.json({}));
+    await expectError(
+      conversationsCommand.run(["transcript", "4", "--since", "2000abc"], ctx),
+      "--since must be a valid epoch timestamp"
+    );
+  });
+
   it("rejects a missing id on related", async () => {
     const ctx = proxyContext(() => Response.json({}));
     await expectError(conversationsCommand.run(["related"], ctx), "Missing conversation id.");
@@ -332,6 +340,38 @@ describe("conversations command (registry-derived)", () => {
     };
     expect(parsed.since).toBe(2_000);
     expect(parsed.transcript.map((utterance) => utterance.id)).toEqual([2, 3, 4]);
+  });
+
+  it("accepts epoch zero for transcript --since", async () => {
+    const ctx = proxyContext(() =>
+      Response.json({
+        conversation: {
+          id: 4,
+          transcriptions: [
+            {
+              id: 1,
+              realtime: false,
+              utterances: [
+                { id: 1, text: "epoch", speaker: "SPEAKER_1", spoken_at: 0, start: null },
+              ],
+            },
+          ],
+        },
+      })
+    );
+    const logs: string[] = [];
+    const spy = spyOn(console, "log").mockImplementation((...a) => { logs.push(a.join(" ")); });
+    try {
+      await conversationsCommand.run(["transcript", "4", "--since", "0", "--json"], ctx);
+    } finally {
+      spy.mockRestore();
+    }
+    const parsed = JSON.parse(logs.join("\n")) as {
+      since: number;
+      transcript: Array<{ id: number }>;
+    };
+    expect(parsed.since).toBe(0);
+    expect(parsed.transcript.map((utterance) => utterance.id)).toEqual([1]);
   });
 
   it("leaves the transcript unfiltered and omits since when --since is absent", async () => {

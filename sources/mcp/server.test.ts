@@ -294,6 +294,34 @@ describe("MCP server", () => {
     expect(JSON.parse(text)).toEqual(serverBody);
   });
 
+  it("bee_get_conversation_transcript honors numeric-string since values", async () => {
+    const text = await callTool(
+      "bee_get_conversation_transcript",
+      { id: 4, since: "2000" },
+      contextReturning({
+        conversation: {
+          id: 4,
+          transcriptions: [
+            {
+              id: 1,
+              utterances: [
+                { id: 1, text: "older", spoken_at: 1000 },
+                { id: 2, text: "newer", spoken_at: 2000 },
+              ],
+            },
+          ],
+        },
+      })
+    );
+
+    const parsed = JSON.parse(text) as {
+      since: number;
+      transcript: Array<{ id: number }>;
+    };
+    expect(parsed.since).toBe(2000);
+    expect(parsed.transcript.map((utterance) => utterance.id)).toEqual([2]);
+  });
+
   it("rejects an oversized batch with a single -32600 error", async () => {
     const batch = Array.from({ length: 51 }, (_value, index) => ({
       jsonrpc: "2.0",
