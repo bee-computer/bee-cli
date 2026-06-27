@@ -1,4 +1,5 @@
 import type { Command, CommandContext } from "@/commands/types";
+import { ValidationError } from "@/errors";
 import { printJson, requestClientJson } from "@/client/clientApi";
 import {
   formatDateValue,
@@ -103,7 +104,7 @@ function parseChangedArgs(args: readonly string[]): ChangedOptions {
     if (arg === "--cursor") {
       const value = args[i + 1];
       if (value === undefined) {
-        throw new Error("--cursor requires a value");
+        throw new ValidationError("--cursor requires a value");
       }
       cursor = value;
       i += 1;
@@ -111,14 +112,14 @@ function parseChangedArgs(args: readonly string[]): ChangedOptions {
     }
 
     if (arg.startsWith("-")) {
-      throw new Error(`Unknown option: ${arg}`);
+      throw new ValidationError(`Unknown option: ${arg}`);
     }
 
     positionals.push(arg);
   }
 
   if (positionals.length > 0) {
-    throw new Error(`Unexpected arguments: ${positionals.join(" ")}`);
+    throw new ValidationError(`Unexpected arguments: ${positionals.join(" ")}`);
   }
 
   const options: ChangedOptions = {};

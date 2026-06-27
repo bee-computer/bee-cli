@@ -1,6 +1,5 @@
 import type { Command, CommandContext } from "@/commands/types";
 import { requireClientToken } from "@/client/clientApi";
-import Handlebars from "handlebars";
 
 const SUPPORTED_EVENT_TYPES = [
     // Conversations
@@ -291,16 +290,19 @@ type WebhookPayload = {
 
 type WebhookConfig = {
     endpoint: string;
-    template: Handlebars.TemplateDelegate<WebhookPayload>;
+    bodyTemplate: string;
 };
+
+function renderTemplate(template: string, vars: Record<string, string>): string {
+    return template.replace(/\{\{(\w+)\}\}/g, (_, key) => vars[key] ?? "");
+}
 
 function buildWebhook(options: StreamOptions): WebhookConfig | null {
     if (!options.webhookEndpoint || !options.webhookBody) {
         return null;
     }
 
-    const template = Handlebars.compile(options.webhookBody, { noEscape: true });
-    return { endpoint: options.webhookEndpoint, template };
+    return { endpoint: options.webhookEndpoint, bodyTemplate: options.webhookBody };
 }
 
 async function handleEvent(
@@ -385,21 +387,19 @@ async function sendWebhook(
     webhook: WebhookConfig,
     payload: WebhookPayload
 ): Promise<void> {
-    let body: string;
-    try {
-        body = webhook.template(payload);
-    } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        console.error(`Webhook template failed: ${message}`);
-        return;
-    }
+    const vars: Record<string, string> = {
+        message: payload.message,
+        agentMessage: payload.agentMessage,
+        event: payload.event,
+        timestamp: payload.timestamp,
+        raw: payload.raw,
+    };
+    const body = renderTemplate(webhook.bodyTemplate, vars);
 
     try {
         const response = await fetch(webhook.endpoint, {
             method: "POST",
-            headers: {
-                "Content-Type": "application/json",
-            },
+            headers: { "Content-Type": "application/json" },
             body,
         });
 
@@ -412,6 +412,7 @@ async function sendWebhook(
         console.error(`Webhook request failed: ${message}`);
     }
 }
+
 
 function formatEvent(
     eventType: string,
