@@ -26,7 +26,7 @@ type TodoUpdateOptions = {
 };
 
 type FactUpdateOptions = {
-  text: string;
+  text?: string;
   confirmed?: boolean;
 };
 
@@ -69,6 +69,7 @@ export type DataApi = {
     get: <T = unknown>(id: string | number) => Promise<T>;
     create: <T = unknown>(text: string) => Promise<T>;
     update: <T = unknown>(id: string | number, options: FactUpdateOptions) => Promise<T>;
+    confirm: <T = unknown>(id: string | number) => Promise<T>;
     delete: <T = unknown>(id: string | number) => Promise<T>;
   };
   todos: {
@@ -118,12 +119,16 @@ export function createDataApi(runner: BeeCliRunner): DataApi {
       get: (id) => runner.runJson(["facts", "get", String(id)]),
       create: (text) => runner.runJson(["facts", "create", "--text", text]),
       update: (id, options) => {
-        const args = ["facts", "update", String(id), "--text", options.text];
+        const args = ["facts", "update", String(id)];
+        if (options.text !== undefined) {
+          args.push("--text", options.text);
+        }
         if (options.confirmed !== undefined) {
           args.push("--confirmed", String(options.confirmed));
         }
         return runner.runJson(args);
       },
+      confirm: (id) => runner.runJson(["facts", "confirm", String(id)]),
       delete: (id) => runner.runJson(["facts", "delete", String(id)]),
     },
     todos: {

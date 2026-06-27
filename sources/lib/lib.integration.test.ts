@@ -75,6 +75,32 @@ describe("lib integration", () => {
   );
 
   it(
+    "data api builds facts update and confirm arguments",
+    async () => {
+      const runner = createNodeRunner(
+        'console.log(JSON.stringify({ argv: process.argv.slice(1) }));'
+      );
+      const api = createDataApi(runner);
+
+      const updateResult = (await api.facts.update(4, {
+        confirmed: true,
+      })) as { argv: string[] };
+      const confirmResult = (await api.facts.confirm(4)) as { argv: string[] };
+
+      expect(updateResult.argv).toEqual([
+        "facts",
+        "update",
+        "4",
+        "--confirmed",
+        "true",
+        "--json",
+      ]);
+      expect(confirmResult.argv).toEqual(["facts", "confirm", "4", "--json"]);
+    },
+    TEST_TIMEOUT_MS
+  );
+
+  it(
     "search builds keyword args including filter/sort/since/until",
     async () => {
       const runner = createNodeRunner(
