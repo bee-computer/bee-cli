@@ -296,6 +296,77 @@ describe("conversations command (registry-derived)", () => {
     expect(out).toContain("# Conversation Transcript");
   });
 
+  it("filters transcript utterances by --since, dropping older and null-timestamp utterances", async () => {
+    const ctx = proxyContext(() =>
+      Response.json({
+        conversation: {
+          id: 4,
+          transcriptions: [
+            {
+              id: 1,
+              realtime: false,
+              utterances: [
+                { id: 1, text: "older", speaker: "SPEAKER_1", spoken_at: 1_000, start: null },
+                { id: 2, text: "boundary", speaker: "SPEAKER_1", spoken_at: 2_000, start: null },
+                { id: 3, text: "newer", speaker: "SPEAKER_1", spoken_at: 3_000, start: null },
+                // No spoken_at: falls back to start, which is at/after the bound.
+                { id: 4, text: "start-only", speaker: "SPEAKER_1", spoken_at: null, start: 2_500 },
+                // Neither timestamp: cannot be ordered, excluded when --since is set.
+                { id: 5, text: "no-timestamp", speaker: "SPEAKER_1", spoken_at: null, start: null },
+              ],
+            },
+          ],
+        },
+      })
+    );
+    const logs: string[] = [];
+    const spy = spyOn(console, "log").mockImplementation((...a) => { logs.push(a.join(" ")); });
+    try {
+      await conversationsCommand.run(["transcript", "4", "--since", "2000", "--json"], ctx);
+    } finally {
+      spy.mockRestore();
+    }
+    const parsed = JSON.parse(logs.join("\n")) as {
+      since: number;
+      transcript: Array<{ id: number }>;
+    };
+    expect(parsed.since).toBe(2_000);
+    expect(parsed.transcript.map((utterance) => utterance.id)).toEqual([2, 3, 4]);
+  });
+
+  it("leaves the transcript unfiltered and omits since when --since is absent", async () => {
+    const ctx = proxyContext(() =>
+      Response.json({
+        conversation: {
+          id: 4,
+          transcriptions: [
+            {
+              id: 1,
+              realtime: false,
+              utterances: [
+                { id: 1, text: "older", speaker: "SPEAKER_1", spoken_at: 1_000, start: null },
+                { id: 2, text: "no-timestamp", speaker: "SPEAKER_1", spoken_at: null, start: null },
+              ],
+            },
+          ],
+        },
+      })
+    );
+    const logs: string[] = [];
+    const spy = spyOn(console, "log").mockImplementation((...a) => { logs.push(a.join(" ")); });
+    try {
+      await conversationsCommand.run(["transcript", "4", "--json"], ctx);
+    } finally {
+      spy.mockRestore();
+    }
+    const parsed = JSON.parse(logs.join("\n")) as {
+      since?: number;
+      transcript: Array<{ id: number }>;
+    };
+    expect(parsed.since).toBeUndefined();
+    expect(parsed.transcript.map((utterance) => utterance.id)).toEqual([1, 2]);
+  });
+
   // ---- related success path -------------------------------------------------
 
   it("renders related conversations from /v1/conversations/:id/related", async () => {

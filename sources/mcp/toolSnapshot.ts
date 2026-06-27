@@ -280,6 +280,10 @@ export const TOOL_SNAPSHOT: ToolDefinition[] = [
         "id": {
           "type": "number",
           "description": "Bee conversation ID."
+        },
+        "since": {
+          "type": "number",
+          "description": "Only return utterances spoken at or after this time (epoch milliseconds). Lets a live transcript watcher poll for just new utterances without tracking which it has already seen. Utterances with no timestamp are excluded when set."
         }
       },
       "required": [
