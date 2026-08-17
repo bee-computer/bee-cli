@@ -11,6 +11,7 @@ import type { ResourceModule } from "@/resources/types";
 import { activityResource } from "@/resources/activity";
 import { conversationsResource } from "@/resources/conversations";
 import { dailyResource } from "@/resources/daily";
+import { externalAccessResource } from "@/resources/externalAccess";
 import { factsResource } from "@/resources/facts";
 import { insightsResource } from "@/resources/insights";
 import { journalsResource } from "@/resources/journals";
@@ -27,6 +28,7 @@ export const RESOURCES: readonly ResourceModule[] = [
   activityResource,
   conversationsResource,
   dailyResource,
+  externalAccessResource,
   factsResource,
   insightsResource,
   journalsResource,

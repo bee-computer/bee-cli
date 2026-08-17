@@ -358,6 +358,26 @@ export const TOOL_SNAPSHOT: ToolDefinition[] = [
     }
   },
   {
+    "name": "bee_list_external_access",
+    "description": "List external services and data types that have accessed Bee data. Paginate with cursor using the returned next_cursor.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "limit": {
+          "type": "number",
+          "minimum": 1,
+          "maximum": 100,
+          "description": "Maximum items to return."
+        },
+        "cursor": {
+          "type": "string",
+          "description": "Pagination cursor from a previous response's next_cursor; omit for the first page."
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  {
     "name": "bee_list_voice_notes",
     "description": "List Bee voice notes or journal-style entries. Paginate with cursor using the returned next_cursor.",
     "inputSchema": {

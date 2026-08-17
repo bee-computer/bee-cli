@@ -3,6 +3,7 @@ import { activityCommand } from "@/commands/activity";
 import { conversationsCommand } from "@/commands/conversations";
 import { dailyCommand } from "@/commands/daily";
 import { changedCommand } from "@/commands/changed";
+import { externalAccessCommand } from "@/commands/externalAccess";
 import { factsCommand } from "@/commands/facts";
 import { insightsCommand } from "@/commands/insights";
 import { journalsCommand } from "@/commands/journals";
@@ -38,6 +39,7 @@ const commands = [
   changedCommand,
   conversationsCommand,
   dailyCommand,
+  externalAccessCommand,
   factsCommand,
   insightsCommand,
   journalsCommand,
