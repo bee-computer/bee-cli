@@ -22,6 +22,11 @@ const SUPPORTED_EVENT_TYPES = [
     'journal-text',
 ] as const;
 
+// Reconnect backoff: 1s, 2s, 4s, ... capped at 30s. A connection that stayed up this long resets it.
+const RECONNECT_BASE_MS = 1_000;
+const RECONNECT_MAX_MS = 30_000;
+const HEALTHY_CONNECTION_MS = 60_000;
+
 type StreamOptions = {
     types?: string[];
     format: StreamOutputFormat;
@@ -48,7 +53,16 @@ export const streamCommand: Command = {
     usage: USAGE,
     run: async (args, context) => {
         const options = parseArgs(args);
-        await handleStream(options, context);
+        const stop = new AbortController();
+
+        process.on("SIGINT", () => {
+            if (options.format === "pretty") {
+                console.log("\nDisconnecting...");
+            }
+            stop.abort();
+        });
+
+        await streamWithReconnect(options, context, stop.signal);
     },
 };
 
@@ -124,9 +138,31 @@ function parseArgs(args: readonly string[]): StreamOptions {
     return options;
 }
 
-async function handleStream(
+export class StreamHttpError extends Error {
+    constructor(readonly status: number, body: string) {
+        super(`Stream failed: ${status} ${body}`);
+        this.name = "StreamHttpError";
+    }
+}
+
+// A dropped connection, a timeout or a busy server can clear up on its own. Any other HTTP error will not.
+export function isTransientStreamError(error: unknown): boolean {
+    if (error instanceof StreamHttpError) {
+        return error.status >= 500 || error.status === 408 || error.status === 429;
+    }
+    return true;
+}
+
+export function reconnectDelayMs(attempt: number): number {
+    return Math.min(RECONNECT_BASE_MS * 2 ** attempt, RECONNECT_MAX_MS);
+}
+
+// Stays connected until stopped: reconnects with backoff when the stream ends or fails for a transient reason.
+export async function streamWithReconnect(
     options: StreamOptions,
-    context: CommandContext
+    context: CommandContext,
+    stop: AbortSignal,
+    wait: (ms: number, signal: AbortSignal) => Promise<void> = sleep
 ): Promise<void> {
     const token = await requireClientToken(context);
 
@@ -148,15 +184,67 @@ async function handleStream(
         console.log("Press Ctrl+C to stop.\n");
     }
 
-    const abortController = new AbortController();
-
-    process.on("SIGINT", () => {
-        if (options.format === "pretty") {
-            console.log("\nDisconnecting...");
+    let attempt = 0;
+    while (!stop.aborted) {
+        const startedAt = Date.now();
+        let failure: unknown = null;
+        try {
+            await handleStream(path, token, options, context, webhook, stop);
+        } catch (error) {
+            failure = error;
         }
-        abortController.abort();
-    });
+        if (stop.aborted) {
+            return;
+        }
+        if (failure !== null && !isTransientStreamError(failure)) {
+            throw failure;
+        }
+        if (Date.now() - startedAt >= HEALTHY_CONNECTION_MS) {
+            attempt = 0;
+        }
+        const delay = reconnectDelayMs(attempt);
+        attempt += 1;
+        const reason = failure === null
+            ? options.format === "pretty" ? "" : "Stream ended. "
+            : `Stream error: ${(failure instanceof Error ? failure.message : String(failure)).replace(/[.?!\s]+$/, "")}. `;
+        reportReconnect(options, `${reason}Reconnecting in ${delay / 1000}s (attempt ${attempt}).`);
+        await wait(delay, stop);
+    }
+}
 
+// Pretty output is for people, so it goes to stdout. JSON and agent output must stay parseable, so notices go to stderr.
+function reportReconnect(options: StreamOptions, message: string): void {
+    if (options.format === "pretty") {
+        console.log(message);
+    } else {
+        console.error(message);
+    }
+}
+
+function sleep(ms: number, signal: AbortSignal): Promise<void> {
+    return new Promise((resolve) => {
+        if (signal.aborted) {
+            resolve();
+            return;
+        }
+        const done = () => {
+            clearTimeout(timer);
+            signal.removeEventListener("abort", done);
+            resolve();
+        };
+        const timer = setTimeout(done, ms);
+        signal.addEventListener("abort", done, { once: true });
+    });
+}
+
+async function handleStream(
+    path: string,
+    token: string | null,
+    options: StreamOptions,
+    context: CommandContext,
+    webhook: WebhookConfig | null,
+    signal: AbortSignal
+): Promise<void> {
     try {
         const headers = new Headers({ Accept: "text/event-stream" });
         if (token) {
@@ -166,12 +254,12 @@ async function handleStream(
         const response = await context.client.fetch(path, {
             method: "GET",
             headers,
-            signal: abortController.signal,
+            signal,
         });
 
         if (!response.ok) {
             const text = await response.text();
-            throw new Error(`Stream failed: ${response.status} ${text}`);
+            throw new StreamHttpError(response.status, text);
         }
 
         if (!response.body) {
