@@ -71,26 +71,30 @@ function isHelpFlag(value: string): boolean {
   return value === "-h" || value === "--help";
 }
 
-function printHelp(): void {
-  console.log(`${BIN} <command> [options]`);
-  console.log("");
-  console.log("Commands:");
+// Help the user asked for goes to stdout. Help printed because something failed goes to stderr,
+// so it never mixes into output another program is reading (for example `bee stream --json`).
+type Write = (line: string) => void;
+
+function printHelp(write: Write = console.log): void {
+  write(`${BIN} <command> [options]`);
+  write("");
+  write("Commands:");
 
   for (const command of commands) {
     const aliasText = command.aliases && command.aliases.length > 0
       ? ` (aliases: ${command.aliases.join(", ")})`
       : "";
-    console.log(`  ${command.name}  ${command.description}${aliasText}`);
+    write(`  ${command.name}  ${command.description}${aliasText}`);
   }
 
-  console.log("");
-  console.log(`Run \"${BIN} <command> --help\" for command-specific help.`);
+  write("");
+  write(`Run \"${BIN} <command> --help\" for command-specific help.`);
 }
 
-function printCommandHelp(command: Command): void {
-  console.log(command.usage);
-  console.log("");
-  console.log(command.description);
+function printCommandHelp(command: Command, write: Write = console.log): void {
+  write(command.usage);
+  write("");
+  write(command.description);
 }
 
 async function runCli(): Promise<void> {
@@ -114,7 +118,7 @@ async function runCli(): Promise<void> {
 
   if (!command) {
     console.error(`Unknown command: ${commandName}`);
-    printHelp();
+    printHelp(console.error);
     process.exitCode = 1;
     return;
   }
@@ -134,7 +138,7 @@ async function runCli(): Promise<void> {
     } else {
       console.error("Unexpected error");
     }
-    printCommandHelp(command);
+    printCommandHelp(command, console.error);
     process.exitCode = 1;
   }
 }
