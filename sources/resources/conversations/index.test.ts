@@ -157,6 +157,70 @@ describe("conversations command (registry-derived)", () => {
     expect(seen).toBe("?limit=3&cursor=xyz");
   });
 
+  it("follows next_cursor to the end with --all and returns one combined page", async () => {
+    const pages: Record<string, unknown> = {
+      "": {
+        conversations: [{ id: 1, start_time: 1, end_time: null, created_at: 1, summary: null, state: "COMPLETED" }],
+        next_cursor: "p2",
+        timezone: "UTC",
+      },
+      p2: {
+        conversations: [{ id: 2, start_time: 2, end_time: null, created_at: 2, summary: null, state: "COMPLETED" }],
+        next_cursor: "p3",
+        timezone: "UTC",
+      },
+      p3: {
+        conversations: [{ id: 3, start_time: 3, end_time: null, created_at: 3, summary: null, state: "COMPLETED" }],
+        next_cursor: null,
+        timezone: "UTC",
+      },
+    };
+    const seen: string[] = [];
+    const ctx = proxyContext((request) => {
+      const url = new URL(request.url);
+      seen.push(url.search);
+      return Response.json(pages[url.searchParams.get("cursor") ?? ""]);
+    });
+
+    const logs = await captureStdout(() =>
+      conversationsCommand.run(["list", "--all", "--limit", "1", "--json"], ctx)
+    );
+    const out = JSON.parse(logs.join("\n"));
+    expect(out.conversations.map((c: { id: number }) => c.id)).toEqual([1, 2, 3]);
+    expect(out.next_cursor).toBeNull();
+    expect(out.timezone).toBe("UTC");
+    expect(seen).toEqual(["?limit=1", "?limit=1&cursor=p2", "?limit=1&cursor=p3"]);
+  });
+
+  it("starts --all from --cursor when one is given", async () => {
+    const seen: string[] = [];
+    const ctx = proxyContext((request) => {
+      seen.push(new URL(request.url).search);
+      return Response.json({ conversations: [], next_cursor: null, timezone: "UTC" });
+    });
+    await captureStdout(() => conversationsCommand.run(["list", "--all", "--cursor", "mid", "--json"], ctx));
+    expect(seen).toEqual(["?cursor=mid"]);
+  });
+
+  it("stops --all when a page comes back empty even if it carries a cursor", async () => {
+    let calls = 0;
+    const ctx = proxyContext(() => {
+      calls += 1;
+      return Response.json({ conversations: [], next_cursor: "again", timezone: "UTC" });
+    });
+    const logs = await captureStdout(() => conversationsCommand.run(["list", "--all", "--json"], ctx));
+    expect(calls).toBe(1);
+    expect(JSON.parse(logs.join("\n")).next_cursor).toBeNull();
+  });
+
+  it("prints no pagination footer when --all stops on an empty page", async () => {
+    const ctx = proxyContext(() =>
+      Response.json({ conversations: [], next_cursor: "again", timezone: "UTC" })
+    );
+    const logs = await captureStdout(() => conversationsCommand.run(["list", "--all"], ctx));
+    expect(logs.join("\n")).not.toContain("## Pagination");
+  });
+
   it("renders an empty conversation list as markdown", async () => {
     const ctx = proxyContext(() =>
       Response.json({ conversations: [], next_cursor: null, timezone: "UTC" })

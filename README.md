@@ -147,7 +147,7 @@ By default, data commands return markdown. Use `--json` to print raw JSON.
   - `todos dismiss-suggestion <id>` - Dismiss a suggested todo. Options: `--json`.
 
 - `conversations` - Access your recorded conversations.
-  - `conversations list` - List conversations. Options: `--limit N`, `--cursor <cursor>`, `--json`.
+  - `conversations list` - List conversations. Options: `--limit N`, `--cursor <cursor>`, `--all` (follow `next_cursor` to the end and return every conversation in one response), `--json`.
   - `conversations get <id>` - Get a specific conversation with full transcript. Options: `--json`.
   - `conversations transcript <id>` - Get just the transcript utterances. Use `--since <epochMs>` to return only utterances spoken at or after a given time (epoch milliseconds) — handy for polling a live transcript for just the new utterances. Options: `--since <epochMs>`, `--json`.
   - `conversations related <id>` - Find conversations related to one. Options: `--limit N`, `--json`.

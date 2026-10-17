@@ -20,7 +20,7 @@ import {
 } from "@/utils/markdown";
 
 const USAGE = [
-  "bee conversations list [--limit N] [--cursor <cursor>] [--json]",
+  "bee conversations list [--limit N] [--cursor <cursor>] [--all] [--json]",
   "bee conversations get <id> [--json]",
   "bee conversations transcript <id> [--since <epochMs>] [--json]",
   "bee conversations related <id> [--limit N] [--json]",
@@ -61,7 +61,11 @@ function parseTranscriptSince(value: unknown, surface: Surface): number | undefi
 
 // ---- list (= bee_list_conversations) ----------------------------------------
 
-type ConversationsListInput = { limit: number | undefined; cursor: string | undefined };
+type ConversationsListInput = { limit: number | undefined; cursor: string | undefined; all: boolean };
+
+// Upper bound on pages fetched by `list --all`, so a server that keeps
+// returning a cursor cannot make the CLI loop forever.
+const MAX_LIST_PAGES = 1000;
 
 type ConversationSummary = {
   id: number;
@@ -85,6 +89,7 @@ const listConversations: ActionDefinition<ConversationsListInput> = {
     flags: [
       { name: "--limit", kind: "int" },
       { name: "--cursor", kind: "string" },
+      { name: "--all", kind: "bool" },
     ],
     render: (result, format) => {
       if (result.kind !== "json") {
@@ -127,19 +132,54 @@ const listConversations: ActionDefinition<ConversationsListInput> = {
       ? (typeof raw["limit"] === "number" ? raw["limit"] : undefined)
       : (raw["limit"] === undefined ? undefined : numberArg(raw["limit"], 10, 1, 20)),
     cursor: coerceOptionalString(raw["cursor"]),
+    // CLI only: MCP callers already page with cursor, one tool call per page.
+    all: surface === "cli" && raw["all"] === true,
   }),
   run: async (ctx, input) => {
-    const params = new URLSearchParams();
-    if (input.limit !== undefined) {
-      params.set("limit", String(input.limit));
+    const fetchPage = async (cursor: string | undefined): Promise<unknown> => {
+      const params = new URLSearchParams();
+      if (input.limit !== undefined) {
+        params.set("limit", String(input.limit));
+      }
+      if (cursor !== undefined) {
+        params.set("cursor", cursor);
+      }
+      const suffix = params.toString();
+      const path = suffix ? `/v1/conversations?${suffix}` : "/v1/conversations";
+      return parseJson(await apiGet(ctx, path));
+    };
+
+    if (!input.all) {
+      return { kind: "json", data: await fetchPage(input.cursor) };
     }
-    if (input.cursor !== undefined) {
-      params.set("cursor", input.cursor);
+
+    // --all: follow next_cursor to the end and return one combined page, so
+    // reading a whole history is one command rather than a loop every
+    // client writes. --limit sets the page size; --cursor sets where to start.
+    const conversations: unknown[] = [];
+    let timezone: unknown = undefined;
+    let cursor = input.cursor;
+    for (let page = 0; page < MAX_LIST_PAGES; page += 1) {
+      const record = asRecord(await fetchPage(cursor));
+      const items = arrayProp(record, "conversations");
+      conversations.push(...items);
+      if (timezone === undefined) {
+        timezone = record["timezone"];
+      }
+      const next = record["next_cursor"];
+      // An empty page ends the walk even if it carries a cursor, and the
+      // combined response then reports no further page. Only the page cap
+      // below leaves a cursor in place, because only there is more history
+      // known to remain.
+      cursor = items.length > 0 && typeof next === "string" && next.length > 0 ? next : undefined;
+      if (cursor === undefined) {
+        break;
+      }
     }
-    const suffix = params.toString();
-    const path = suffix ? `/v1/conversations?${suffix}` : "/v1/conversations";
-    const data = parseJson(await apiGet(ctx, path));
-    return { kind: "json", data };
+    return {
+      kind: "json",
+      data: { conversations, next_cursor: cursor ?? null, ...(timezone === undefined ? {} : { timezone }) },
+    };
   },
 };
 
